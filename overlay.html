@@ -3,37 +3,29 @@
 <head>
 <meta charset="utf-8">
 <title>Media Share Overlay</title>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;700&display=swap" rel="stylesheet">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-:root{--accent:#a374f9;--sky:#6ea8ff;--navy:#0d1033;--lav:#c9c3ff;--w:640px}
+/* Plain functional styling only. Restyle later: colors live in the variables below. */
+:root{--accent:#a374f9;--bg:#111;--fg:#fff;--w:640px}
 *{box-sizing:border-box}
-html,body{margin:0;background:transparent;font-family:"Fredoka","Nunito","Segoe UI",system-ui,sans-serif;color:var(--lav);overflow:hidden}
-#card{position:absolute;left:40px;bottom:40px;width:var(--w);opacity:0;transform:translateY(20px);transition:.4s;pointer-events:none}
-#card.on{opacity:1;transform:none}
-#panel{position:relative;background:var(--navy);border:4px solid var(--accent);border-radius:18px;overflow:hidden;box-shadow:0 0 22px rgba(110,168,255,.3)}
-.facets{position:absolute;inset:0}
-.facets::before,.facets::after{content:"";position:absolute;background:#171c52}
-.facets::before{left:0;top:0;width:45%;height:100%;clip-path:polygon(0 0,75% 0,35% 40%,55% 100%,0 100%)}
-.facets::after{right:0;bottom:0;width:40%;height:75%;clip-path:polygon(100% 0,100% 100%,20% 100%,55% 55%)}
-.gems{position:absolute;inset:0;z-index:5;pointer-events:none;filter:drop-shadow(0 0 5px rgba(130,170,255,.85))}
-.gem{position:absolute;width:24px;height:32px}
-#stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-bottom:3px solid var(--accent)}
+html,body{margin:0;background:transparent;font-family:system-ui,sans-serif;color:var(--fg);overflow:hidden}
+#card{position:absolute;left:40px;bottom:40px;width:var(--w);background:var(--bg);border:2px solid var(--accent);opacity:0;transition:opacity .3s;pointer-events:none}
+#card.on{opacity:1}
+#stage{position:relative;width:100%;aspect-ratio:16/9;background:#000}
 #stage>*{position:absolute;inset:0;width:100%;height:100%;border:0}
-#art{background:#0b0d17 center/cover;display:none}
-#art::before{content:"";position:absolute;inset:0;background:rgba(13,16,51,.6)}
+#art{background:#000 center/cover;display:none}
+#art::before{content:"";position:absolute;inset:0;background:rgba(0,0,0,.5)}
 #bars{position:absolute;left:8%;right:8%;bottom:10%;height:55%;display:flex;align-items:flex-end;gap:5px}
-#bars i{flex:1;background:var(--accent);border-radius:3px 3px 0 0;height:8%;box-shadow:0 0 10px var(--accent);transition:height .09s}
+#bars i{flex:1;background:var(--accent);height:8%;transition:height .09s}
 body.audio #art{display:block}
 body.audio.viz-off #bars{display:none}
-body.audio.thumb-off #stage{height:2px;aspect-ratio:auto;border:0;overflow:hidden}
-#info{position:relative;padding:12px 18px 16px}
-#title{font-size:24px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-text-stroke:.6px #fff;text-shadow:0 0 10px rgba(163,116,249,.7)}
-#by{font-size:16px;font-weight:500;opacity:.9;margin-top:2px}
-#by b{color:#fff}
-.paid{display:inline-block;margin-left:8px;padding:1px 10px;border-radius:99px;background:var(--accent);color:#0d1033;font-size:12px;font-weight:700}
-#seekrow{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:14px;font-weight:500;font-variant-numeric:tabular-nums}
-#seek{flex:1;height:10px;border-radius:99px;background:rgba(255,255,255,.12);border:1px solid rgba(163,116,249,.6);overflow:hidden}
+body.audio.thumb-off #stage{height:2px;aspect-ratio:auto;overflow:hidden}
+#info{padding:10px 14px 12px}
+#title{font-size:20px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#by{font-size:14px;opacity:.85;margin-top:2px}
+.paid{margin-left:8px;padding:1px 8px;background:var(--accent);color:#000;font-size:12px;font-weight:700}
+#seekrow{display:flex;align-items:center;gap:10px;margin-top:8px;font-size:13px;font-variant-numeric:tabular-nums}
+#seek{flex:1;height:8px;background:rgba(255,255,255,.2)}
 #fill{height:100%;width:0;background:var(--accent)}
 #demo{position:fixed;top:10px;right:10px;background:#222;padding:10px;border-radius:8px;display:none;gap:6px;flex-wrap:wrap;width:300px;pointer-events:auto;z-index:9;font-family:sans-serif}
 #demo input{width:100%;padding:6px}
@@ -42,14 +34,7 @@ body.audio.thumb-off #stage{height:2px;aspect-ratio:auto;border:0;overflow:hidde
 </style>
 </head>
 <body class="viz-on">
-<svg width="0" height="0" style="position:absolute"><defs>
-<g id="gA"><polygon points="12,0 0,10 12,13" fill="#d6efff"/><polygon points="12,0 24,10 12,13" fill="#8ec5ff"/><polygon points="0,10 12,13 12,32" fill="#5a8cff"/><polygon points="24,10 12,13 12,32" fill="#7a56f0"/></g>
-<g id="gB"><polygon points="12,0 0,10 12,13" fill="#efe6ff"/><polygon points="12,0 24,10 12,13" fill="#c3a9ff"/><polygon points="0,10 12,13 12,32" fill="#9a6cf5"/><polygon points="24,10 12,13 12,32" fill="#7b3fe0"/></g>
-</defs></svg>
 <div id="card">
-  <div class="gems"><svg class="gem" style="right:-15px;top:12px;transform:rotate(22deg)" viewBox="0 0 24 32"><use href="#gA"/></svg><svg class="gem" style="right:-11px;top:50px;width:15px;height:20px" viewBox="0 0 24 32"><use href="#gB"/></svg><svg class="gem" style="right:-13px;top:78px;width:17px;height:22px;transform:rotate(-12deg)" viewBox="0 0 24 32"><use href="#gA"/></svg><svg class="gem" style="left:-14px;bottom:66px;width:18px;height:24px;transform:rotate(-18deg)" viewBox="0 0 24 32"><use href="#gB"/></svg><svg class="gem" style="left:-11px;bottom:38px;width:15px;height:20px" viewBox="0 0 24 32"><use href="#gA"/></svg><svg class="gem" style="left:-15px;bottom:6px;transform:rotate(14deg)" viewBox="0 0 24 32"><use href="#gB"/></svg></div>
-  <div id="panel">
-  <div class="facets"></div>
   <div id="stage">
     <div id="yt"></div>
     <video id="vid" playsinline style="display:none;object-fit:contain;background:#000"></video>
@@ -60,14 +45,14 @@ body.audio.thumb-off #stage{height:2px;aspect-ratio:auto;border:0;overflow:hidde
     <div id="by"></div>
     <div id="seekrow"><span id="cur">0:00</span><div id="seek"><div id="fill"></div></div><span id="dur">0:00</span></div>
   </div>
-  </div>
 </div>
 <div id="status"></div>
 <div id="demo">
   <input id="dUrl" placeholder="Paste a YouTube or direct .mp3/.mp4 link">
+  <input id="dTag" placeholder="Priority badge text (optional, e.g. 250 Bits)">
   <button id="dPlay">Play</button><button id="dPause">Pause</button><button id="dRes">Resume</button>
   <button id="dA">Audio</button><button id="dV">Video</button><button id="dB">Both</button>
-  <button id="dViz">Visualizer</button><button id="dThumb">Thumbnail</button><button id="dStop">Stop</button>
+  <button id="dViz">Visualizer</button><button id="dPower">Power: ON</button><button id="dThumb">Thumbnail</button><button id="dStop">Stop</button>
 </div>
 
 <script src="https://www.youtube.com/iframe_api"></script>
@@ -105,8 +90,9 @@ function applyMode() {
 function showItem(it) {
   state.item = it;
   $("title").textContent = it.title || "Loading...";
-  $("by").innerHTML = "Requested by <b></b>" + (it.paid ? '<span class="paid">PRIORITY</span>' : "");
+  $("by").innerHTML = 'Requested by <b></b><span class="paid"></span>';
   $("by").querySelector("b").textContent = it.by || "someone";
+  const pd = $("by").querySelector(".paid"); if (it.tag) pd.textContent = it.tag; else pd.remove();   // tag = how they got priority, e.g. "250 Bits"
   $("dur").textContent = fmt(it.duration); $("fill").style.width = "0";
   const id = ytId(it.url);
   $("art").style.backgroundImage = id ? `url(https://img.youtube.com/vi/${id}/hqdefault.jpg)` : "none";
@@ -198,7 +184,10 @@ connect();
 /* ---------- demo panel (?demo=1): test without Streamer.bot ---------- */
 if (P.get("demo")) {
   $("demo").style.display = "flex"; $("status").style.display = "block";
-  $("dPlay").onclick = () => handle({ cmd: "play", item: { id: "demo", url: $("dUrl").value.trim(), title: "", by: "TestViewer", paid: false, duration: 0 } });
+  let demoOff = false;   // demo version of the system on/off switch
+  $("dPlay").onclick = () => { if (demoOff) { $("status").textContent = "media share is off"; return; }
+    handle({ cmd: "play", item: { id: "demo", url: $("dUrl").value.trim(), title: "", by: "TestViewer", tag: $("dTag").value.trim(), duration: 0 } }); };
+  $("dPower").onclick = () => { demoOff = !demoOff; if (demoOff) handle({ cmd: "stop" }); $("dPower").textContent = "Power: " + (demoOff ? "OFF" : "ON"); $("status").textContent = demoOff ? "media share is off" : "media share is on"; };
   $("dPause").onclick = () => handle({ cmd: "pause" }); $("dRes").onclick = () => handle({ cmd: "resume" });
   $("dStop").onclick = () => handle({ cmd: "stop" });
   $("dA").onclick = () => handle({ cmd: "mode", value: "audio" }); $("dV").onclick = () => handle({ cmd: "mode", value: "video" }); $("dB").onclick = () => handle({ cmd: "mode", value: "both" });
