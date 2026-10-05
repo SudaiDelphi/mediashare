@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Media Share Overlay</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{--accent:#00e5ff;--w:640px}
+*{box-sizing:border-box}
+html,body{margin:0;background:transparent;font-family:"Segoe UI",system-ui,sans-serif;color:#fff;overflow:hidden}
+#card{position:absolute;left:40px;bottom:40px;width:var(--w);background:rgba(12,14,24,.88);border:2px solid var(--accent);border-radius:16px;box-shadow:0 0 24px color-mix(in srgb,var(--accent) 45%,transparent);overflow:hidden;opacity:0;transform:translateY(20px);transition:.4s;pointer-events:none}
+#card.on{opacity:1;transform:none}
+#stage{position:relative;width:100%;aspect-ratio:16/9;background:#000}
+#stage>*{position:absolute;inset:0;width:100%;height:100%;border:0}
+#art{background:#0b0d17 center/cover;display:none}
+#art::before{content:"";position:absolute;inset:0;background:rgba(0,0,0,.55)}
+#bars{position:absolute;left:8%;right:8%;bottom:10%;height:55%;display:flex;align-items:flex-end;gap:5px}
+#bars i{flex:1;background:var(--accent);border-radius:3px 3px 0 0;height:8%;box-shadow:0 0 10px var(--accent);transition:height .09s}
+body.audio #art{display:block}
+body.audio.viz-off #bars{display:none}
+#info{padding:12px 16px 14px}
+#title{font-size:22px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#by{font-size:15px;opacity:.8;margin-top:2px}
+#by b{color:var(--accent)}
+.paid{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:99px;background:var(--accent);color:#000;font-size:12px;font-weight:800}
+#seekrow{display:flex;align-items:center;gap:10px;margin-top:10px;font-size:13px;font-variant-numeric:tabular-nums}
+#seek{flex:1;height:8px;border-radius:99px;background:rgba(255,255,255,.18);overflow:hidden}
+#fill{height:100%;width:0;background:var(--accent);box-shadow:0 0 8px var(--accent)}
+#demo{position:fixed;top:10px;right:10px;background:#222;padding:10px;border-radius:8px;display:none;gap:6px;flex-wrap:wrap;width:300px;pointer-events:auto;z-index:9}
+#demo input{width:100%;padding:6px}
+#demo button{padding:5px 8px;cursor:pointer}
+#status{position:fixed;top:4px;left:6px;font-size:11px;opacity:.6;display:none}
+</style>
+</head>
+<body class="viz-on">
+<div id="card">
+  <div id="stage">
+    <div id="yt"></div>
+    <video id="vid" playsinline style="display:none;object-fit:contain;background:#000"></video>
+    <div id="art"><div id="bars"></div></div>
+  </div>
+  <div id="info">
+    <div id="title">-</div>
+    <div id="by"></div>
+    <div id="seekrow"><span id="cur">0:00</span><div id="seek"><div id="fill"></div></div><span id="dur">0:00</span></div>
+  </div>
+</div>
+<div id="status"></div>
+<div id="demo">
+  <input id="dUrl" placeholder="Paste a YouTube or direct .mp3/.mp4 link">
+  <button id="dPlay">Play</button><button id="dPause">Pause</button><button id="dRes">Resume</button>
+  <button id="dA">Audio</button><button id="dV">Video</button><button id="dB">Both</button>
+  <button id="dViz">Visualizer</button><button id="dStop">Stop</button>
+</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+/* ---------- config (URL params: ?host=127.0.0.1&port=8080&demo=1&accent=ff00aa&scale=1) ---------- */
+const P = new URLSearchParams(location.search);
+const HOST = P.get("host") || "127.0.0.1", PORT = P.get("port") || "8080";
+const ACTION = "Media Share Controller";
+if (P.get("accent")) document.documentElement.style.setProperty("--accent", "#" + P.get("accent"));
+if (P.get("scale")) document.documentElement.style.setProperty("--w", 640 * P.get("scale") + "px");
+
+const $ = id => document.getElementById(id);
+const state = { item: null, mode: "both", volume: 70, playing: false, kind: null };
+let yt = null, ytReady = false, pendingPlay = null, ws = null;
+
+/* ---------- helpers ---------- */
+const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+function ytId(u) {
+  const m = String(u).match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/);
+  return m ? m[1] : null;
+}
+function send(event, extra) {   // overlay -> Streamer.bot (runs the controller action with args)
+  if (!ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ request: "DoAction", id: "ms" + Date.now(), action: { name: ACTION },
+    args: Object.assign({ ms_event: event, ms_id: state.item ? state.item.id : "" }, extra || {}) }));
+}
+function applyMode() {
+  document.body.classList.toggle("audio", state.mode === "audio");
+  const mute = state.mode === "video";
+  if (yt && ytReady) { mute ? yt.mute() : yt.unMute(); yt.setVolume(state.volume); }
+  $("vid").muted = mute; $("vid").volume = state.volume / 100;
+}
+
+/* ---------- playback ---------- */
+function showItem(it) {
+  state.item = it;
+  $("title").textContent = it.title || "Loading...";
+  $("by").innerHTML = "Requested by <b></b>" + (it.paid ? '<span class="paid">PRIORITY</span>' : "");
+  $("by").querySelector("b").textContent = it.by || "someone";
+  $("dur").textContent = fmt(it.duration); $("fill").style.width = "0";
+  const id = ytId(it.url);
+  $("art").style.backgroundImage = id ? `url(https://img.youtube.com/vi/${id}/hqdefault.jpg)` : "none";
+  $("card").classList.add("on");
+}
+function play(it) {
+  stop(true); showItem(it);
+  const id = ytId(it.url);
+  if (id) {
+    state.kind = "yt"; $("yt").style.display = ""; $("vid").style.display = "none";
+    if (!ytReady) { pendingPlay = it; return; }
+    yt.loadVideoById(id);
+  } else {
+    state.kind = "file"; $("yt").style.display = "none"; $("vid").style.display = "";
+    $("vid").src = it.url; $("vid").play().catch(() => send("error", { ms_reason: "blocked or unplayable file" }));
+  }
+  applyMode();
+}
+function stop(quiet) {
+  if (yt && ytReady) yt.stopVideo();
+  $("vid").pause(); $("vid").removeAttribute("src");
+  state.playing = false;
+  if (!quiet) { $("card").classList.remove("on"); state.item = null; }
+}
+const act = {
+  pause() { state.kind === "yt" ? yt && yt.pauseVideo() : $("vid").pause(); },
+  resume() { state.kind === "yt" ? yt && yt.playVideo() : $("vid").play(); },
+  seek(t) { state.kind === "yt" ? yt.seekTo(t, true) : ($("vid").currentTime = t); },
+};
+
+/* ---------- YouTube player ---------- */
+window.onYouTubeIframeAPIReady = () => {
+  yt = new YT.Player("yt", { width: "100%", height: "100%",
+    playerVars: { autoplay: 1, controls: 0, rel: 0, modestbranding: 1, playsinline: 1, origin: location.origin },
+    events: {
+      onReady() { ytReady = true; if (pendingPlay) { const p = pendingPlay; pendingPlay = null; play(p); } },
+      onStateChange(e) {
+        if (e.data === YT.PlayerState.PLAYING) {
+          if (!state.playing) { state.playing = true; const d = yt.getVideoData(); 
+            if (state.item) { if (!state.item.title) $("title").textContent = d.title; state.item.title = d.title; state.item.duration = yt.getDuration(); }
+            send("started", { ms_title: d.title, ms_duration: yt.getDuration() }); }
+          applyMode();
+        }
+        if (e.data === YT.PlayerState.ENDED) { state.playing = false; send("ended"); }
+      },
+      onError(e) { send("error", { ms_reason: "youtube error " + e.data }); }   // 101/150 = embedding disabled
+    } });
+};
+$("vid").onplaying = () => { if (!state.playing) { state.playing = true; send("started", { ms_duration: $("vid").duration }); } };
+$("vid").onended = () => { state.playing = false; send("ended"); };
+$("vid").onerror = () => send("error", { ms_reason: "file failed to load" });
+
+/* ---------- progress + visualizer ---------- */
+const bars = $("bars"); for (let i = 0; i < 32; i++) bars.appendChild(document.createElement("i"));
+setInterval(() => {
+  let t = 0, d = 0, playing = false;
+  if (state.kind === "yt" && ytReady && yt.getCurrentTime) { t = yt.getCurrentTime(); d = yt.getDuration(); playing = yt.getPlayerState() === 1; }
+  else if (state.kind === "file") { t = $("vid").currentTime; d = $("vid").duration; playing = !$("vid").paused; }
+  if (d) { $("cur").textContent = fmt(t); $("dur").textContent = fmt(d); $("fill").style.width = (t / d * 100) + "%"; }
+  /* simulated visualizer: browsers can't read audio out of a YouTube iframe, so bars are animated while playing */
+  [...bars.children].forEach((b, i) => b.style.height = playing ? (10 + Math.abs(Math.sin(Date.now() / 300 + i * .7)) * 35 + Math.random() * 45) + "%" : "6%");
+}, 100);
+
+/* ---------- Streamer.bot WebSocket (Streamer.bot -> overlay) ---------- */
+function handle(m) {
+  switch (m.cmd) {
+    case "play": play(m.item); break;
+    case "pause": act.pause(); break;
+    case "resume": act.resume(); break;
+    case "stop": stop(); break;
+    case "seek": act.seek(+m.time); break;
+    case "volume": state.volume = +m.value; applyMode(); break;
+    case "mode": state.mode = m.value; applyMode(); break;
+    case "visualizer": document.body.classList.toggle("viz-off", !m.value); break;
+  }
+}
+function connect() {
+  ws = new WebSocket(`ws://${HOST}:${PORT}/`);
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ request: "Subscribe", id: "sub", events: { General: ["Custom"] } }));
+    $("status").textContent = "connected"; send("hello");     // controller replies with current state
+  };
+  ws.onmessage = e => { try { const d = JSON.parse(e.data); const m = d.data && d.data.source === "mediashare" ? d.data : (d.source === "mediashare" ? d : null); if (m) handle(m); } catch (_) {} };
+  ws.onclose = () => { $("status").textContent = "reconnecting..."; setTimeout(connect, 3000); };
+}
+connect();
+
+/* ---------- demo panel (?demo=1): test without Streamer.bot ---------- */
+if (P.get("demo")) {
+  $("demo").style.display = "flex"; $("status").style.display = "block";
+  $("dPlay").onclick = () => handle({ cmd: "play", item: { id: "demo", url: $("dUrl").value.trim(), title: "", by: "TestViewer", paid: false, duration: 0 } });
+  $("dPause").onclick = () => handle({ cmd: "pause" }); $("dRes").onclick = () => handle({ cmd: "resume" });
+  $("dStop").onclick = () => handle({ cmd: "stop" });
+  $("dA").onclick = () => handle({ cmd: "mode", value: "audio" }); $("dV").onclick = () => handle({ cmd: "mode", value: "video" }); $("dB").onclick = () => handle({ cmd: "mode", value: "both" });
+  $("dViz").onclick = () => handle({ cmd: "visualizer", value: document.body.classList.contains("viz-off") });
+  document.body.style.background = "#334";
+}
+</script>
+</body>
+</html>
