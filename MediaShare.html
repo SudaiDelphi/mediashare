@@ -16,7 +16,7 @@ main{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;pad
 section{background:var(--panel);border:1px solid #333;border-radius:6px;padding:12px;margin-bottom:16px}
 #player{position:relative;aspect-ratio:16/9;background:#000}
 #player>*{position:absolute;inset:0;width:100%;height:100%;border:0}
-#pmsg{display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;color:#aaa}
+#pmsg{display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;color:#ddd;background:#0c0c10;font-size:16px;cursor:pointer}
 #bar{height:8px;background:#333;margin-top:8px}#fill{height:100%;width:0;background:var(--accent)}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .badge{padding:1px 8px;background:var(--accent);color:#000;font-size:12px;font-weight:700}
@@ -34,11 +34,12 @@ pre{white-space:pre-wrap;margin:8px 0 0}
   <h1>Media Share</h1>
   <div class="row" style="margin:0"><span id="status" class="dim"></span><span id="who"></span><button id="logout" class="hide">Log out</button></div>
 </header>
+<div id="banner" class="dim" style="padding:6px 16px"></div>
 <main>
   <div>
     <section>
       <h2>Now playing</h2>
-      <div id="player"><div id="yt"></div><div id="pmsg">Click "Watch here" to follow along with the stream.</div></div>
+      <div id="player"><div id="yt"></div><button id="pmsg" type="button">▶ Click here to watch along with the stream</button></div>
       <div id="bar"><div id="fill"></div></div>
       <div id="title" style="font-weight:700;margin-top:8px">Nothing playing</div>
       <div id="by" class="dim"></div>
@@ -64,6 +65,12 @@ pre{white-space:pre-wrap;margin:8px 0 0}
       Higher paid amounts go first, then channel points, then free. Nothing interrupts the song that is playing.<br>
       Supported: YouTube links and direct audio/video files.<br>Each person can have a limited number of requests waiting, and a maximum video length, depending on their role. Type <code>!ms limits</code> in chat to see them.
     </section>
+    <section id="donate" class="hide dim">
+      <h2 style="color:var(--fg)">Donate to join the queue</h2>
+      You can also donate on any of these pages and your request joins the queue like a cheer. Put your link in the donation message and use the same name as your Twitch name. $1 minimum, and $2.50 counts as one sub. Other currencies are converted automatically.
+      <div id="donlinks" class="row"></div>
+      <div style="margin-top:6px"><a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">Rates By Exchange Rate API</a></div>
+    </section>
     <section>
       <h2>Check a link first</h2>
       <input id="clink" type="text" placeholder="Paste a link to see its title and whether it can play">
@@ -72,21 +79,22 @@ pre{white-space:pre-wrap;margin:8px 0 0}
     </section>
   </div>
 </main>
-<footer class="dim"><a href="#" id="modlink">Moderator login</a></footer>
+<footer class="dim"><a href="#" id="modlink">Moderator login</a><div id="diag" style="margin-top:6px"></div></footer>
 <div style="position:absolute;left:-9999px;top:0"><div id="chkp"></div></div>
 
-<script src="https://www.youtube.com/iframe_api"></script>
+<script src="config.js"></script>
+<script src="https://www.youtube.com/iframe_api" onerror="window.ytFailed=true"></script>
 <script>
 /* ---------- config ---------- */
 // api = base URL of the relay. Empty = mock mode with sample data. clientId = your Twitch app's Client ID (public).
-const CFG = { api: "", channel: "sudaidelphi", clientId: "" };
+const CFG = Object.assign({ api: "", channel: "sudaidelphi", clientId: "", donate: [] }, window.MS_CONFIG || {});   // values come from config.js
 const P = new URLSearchParams(location.search);
 const API = (P.get("api") || CFG.api).replace(/\/$/, ""), MOCK = !API || P.get("mock");
 const $ = id => document.getElementById(id);
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 const ytId = u => { const m = String(u).match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/); return m ? m[1] : null; };
 function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
-let state = null, skew = 0, token = sessionStorage.getItem("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
+let lastOk = null, ytFailTimer = null, state = null, skew = 0, token = sessionStorage.getItem("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
 
 /* ---------- data layer (mock or relay) ----------
    Relay API: GET /state | GET /me | POST /remove {id} | GET /mod/check | POST /mod {cmd}
@@ -101,7 +109,7 @@ async function getState() {
     mock.queue.forEach((q, i) => q.eta = Math.max(0, dur - ((now - mock.t0) / 1000) % dur) + mock.queue.slice(0, i).reduce((a, b) => a + b.dur, 0));
     return { on: true, now: { id: "m1", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample now playing (mock data)", by: "MockViewer", tag: "100 Bits", dur }, pos: ((now - mock.t0) / 1000) % dur, playing: true, at: now, serverTime: now, queue: mock.queue, history: mock.history };
   }
-  return (await fetch(API + "/state")).json();
+  const r = await fetch(API + "/state"); if (!r.ok) throw new Error("HTTP " + r.status); return r.json();
 }
 async function api(path, opts) { opts = opts || {}; opts.headers = Object.assign({ "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {}); return (await fetch(API + path, opts)).json(); }
 
@@ -114,6 +122,7 @@ if (location.hash.includes("access_token")) {
 function login(modScope) {
   if (modScope) sessionStorage.setItem("ms_modscope", "1");
   if (MOCK) { token = "mock"; sessionStorage.setItem("ms_token", token); return afterLogin(); }
+  if (!CFG.clientId || CFG.clientId.startsWith("PASTE")) return alert("Twitch login is not set up yet: the Client ID is missing in config.js.");
   const st = crypto.randomUUID(); sessionStorage.setItem("ms_state", st);
   const u = new URL("https://id.twitch.tv/oauth2/authorize");   // mod login also asks to read which channels you moderate
   u.search = new URLSearchParams({ client_id: CFG.clientId, redirect_uri: location.origin + location.pathname, response_type: "token", scope: modScope ? "user:read:moderated_channels" : "", state: st });
@@ -209,7 +218,7 @@ $("cbtn").onclick = () => {
   if (!/^https?:\/\/\S+$/.test(url)) return out.append("Paste a full link starting with https://");
   const id = ytId(url);
   if (!id) { const f = /\.(mp3|mp4|webm|ogg|m4a|wav)(\?.*)?$/i.test(url); out.append(f ? "Direct file: the title can't be previewed, but it should be accepted." : "That site isn't supported. Use YouTube or a direct audio/video file."); if (f) copyBtns(url); return; }
-  if (!chk) return out.append("Player is still loading, try again in a second.");
+  if (!chk) return out.append(window.ytFailed ? "The YouTube player could not load. A browser extension (ad blocker or privacy tool) may be blocking youtube.com." : "The player is still loading. Try again in a second.");
   out.append("Checking..."); clearTimeout(chkTimer);
   chkTimer = setTimeout(() => { if (out.textContent === "Checking...") out.textContent = "Couldn't verify that link."; }, 8000);
   chk.pendingUrl = url; chk.cueVideoById(id);
@@ -224,7 +233,7 @@ function checkDone(ok, title, dur, code) {
 const expected = () => state && state.now ? state.pos + (state.playing ? (Date.now() + skew - state.at) / 1000 : 0) : 0;
 function listInto(id, items, fn) { const o = $(id); o.replaceChildren(); items.forEach(it => { const li = el("li", it.title + " "); li.appendChild(el("span", "by " + it.by + " ", "dim")); if (it.tag) li.appendChild(el("span", it.tag, "badge")); li.appendChild(el("span", " " + fmt(it.dur) + fn(it), "dim")); o.appendChild(li); }); }
 function render() {
-  $("status").textContent = !state.on ? "Media share is currently off" : state.reviewOn ? "Requests are checked by mods before they play" : "";
+  $("status").textContent = state.waiting ? "Waiting for the stream to connect..." : !state.on ? "Media share is currently off" : state.reviewOn ? "Requests are checked by mods before they play" : "";
   const n = state.now;
   $("title").textContent = n ? n.title : "Nothing playing";
   $("by").replaceChildren(); if (n) { $("by").append("Requested by " + n.by + " "); if (n.tag) $("by").appendChild(el("span", n.tag, "badge")); }
@@ -233,35 +242,58 @@ function render() {
   listInto("recent", state.history || [], () => ""); $("rempty").classList.toggle("hide", (state.history || []).length > 0);
   renderMine(); renderMod(); syncPlayer();
 }
-function syncPlayer() {
+function pmsg(text, hide) { const m = $("pmsg"); m.textContent = text; m.classList.toggle("hide", !!hide); }
+const START_TEXT = "▶ Click here to watch along with the stream";
+function syncPlayer() {   // keeps the embedded player on the same video and position as the stream
   if (!watching || !ytReady) return;
+  if (!state) return pmsg("Waiting for the stream...", false);
   const n = state.now, id = n && ytId(n.url);
-  if (!n || !id) { yt.stopVideo(); curId = null; $("pmsg").textContent = n ? "This one is a direct file and can't be shown here. Watch it on the stream." : "Nothing playing right now."; $("pmsg").classList.remove("hide"); return; }
-  $("pmsg").classList.add("hide");
+  if (!n) { yt.stopVideo(); curId = null; return pmsg("Nothing is playing right now. The video will appear here when the next song starts.", false); }
+  if (!id) { yt.stopVideo(); curId = null; return pmsg("This one is a direct file and can't be shown here. Watch it on the stream.", false); }
+  pmsg("", true);
   const pos = Math.max(0, expected());
   if (curId !== n.id) { curId = n.id; yt.loadVideoById({ videoId: id, startSeconds: pos }); yt.setVolume(+$("vol").value); }
   else { if (Math.abs(yt.getCurrentTime() - pos) > 4) yt.seekTo(pos, true); state.playing ? yt.playVideo() : yt.pauseVideo(); }
 }
 window.onYouTubeIframeAPIReady = () => {
-  yt = new YT.Player("yt", { width: "100%", height: "100%", playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1, origin: location.origin }, events: { onReady() { ytReady = true; } } });
+  clearTimeout(ytFailTimer);
+  yt = new YT.Player("yt", { width: "100%", height: "100%", playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1, origin: location.origin }, events: { onReady() { ytReady = true; if (watching) syncPlayer(); } } });
   chk = new YT.Player("chkp", { width: 200, height: 200, events: { onStateChange(e) { if (e.data === 5) checkDone(true, chk.getVideoData().title, chk.getDuration()); }, onError(e) { checkDone(false, null, 0, e.data); } } });
 };
-$("watch").onclick = () => {
+const BLOCKED_TEXT = "The YouTube player could not load. A browser extension (ad blocker or privacy tool) may be blocking youtube.com. Allow it for this page and reload.";
+function toggleWatch() {
   watching = !watching; $("watch").textContent = watching ? "Stop watching" : "Watch here";
-  if (!watching && yt) { yt.stopVideo(); curId = null; $("pmsg").textContent = 'Click "Watch here" to follow along with the stream.'; $("pmsg").classList.remove("hide"); }
-  else if (state) { curId = null; syncPlayer(); }
-};
+  if (!watching) { if (yt && ytReady) yt.stopVideo(); curId = null; return pmsg(START_TEXT, false); }
+  if (ytReady) { curId = null; return syncPlayer(); }
+  if (window.ytFailed) return pmsg(BLOCKED_TEXT, false);
+  pmsg("Loading the YouTube player...", false);
+  clearTimeout(ytFailTimer); ytFailTimer = setTimeout(() => { if (!ytReady && watching) pmsg(BLOCKED_TEXT, false); }, 8000);
+}
+$("watch").onclick = toggleWatch;
+$("pmsg").onclick = () => { if (!watching) toggleWatch(); };
 $("vol").oninput = () => yt && ytReady && yt.setVolume(+$("vol").value);
 
+function renderDonate() {   // donation links come from config.js
+  const list = (CFG.donate || []).filter(d => d && /^https?:\/\//.test(d.url)); if (!list.length) return;
+  $("donate").classList.remove("hide"); const o = $("donlinks"); o.replaceChildren();
+  list.forEach(d => { const a = el("a", d.name || d.url); a.href = d.url; a.target = "_blank"; a.rel = "noopener"; o.append(a, " "); });
+}
 async function refresh() {
-  try { state = await getState(); skew = state.serverTime - Date.now(); render(); }
-  catch (e) { $("status").textContent = "Can't reach the stream right now..."; }
+  try {
+    const s = await getState();
+    if (!s || s.error || !Array.isArray(s.queue)) throw new Error(s && s.error ? "the relay reported: " + s.error : "unexpected reply");
+    s.history = s.history || []; state = s; skew = s.serverTime - Date.now(); lastOk = new Date();
+    $("banner").textContent = MOCK ? "Mock mode: sample data, nothing is sent to the stream" : ""; render();
+  } catch (e) {
+    const hint = e.message === "Failed to fetch" ? "network or CORS problem: check the Worker address in config.js and ALLOWED_ORIGIN in Cloudflare" : /HTTP 5/.test(e.message) ? e.message + ": the relay is reachable but failing; check its D1 binding and variables" : e.message;
+    $("banner").textContent = "Can't reach the stream right now (" + hint + ").";
+  }
+  $("diag").textContent = (MOCK ? "Mock mode" : "Relay: " + new URL(API).host) + (lastOk ? " · updated " + lastOk.toLocaleTimeString() : " · no data yet");
 }
 setInterval(() => { if (state && state.now) { const d = state.now.dur || 0; $("fill").style.width = d ? Math.min(100, expected() / d * 100) + "%" : "0"; } }, 500);
-setInterval(() => { if (!document.hidden) refresh(); }, 10000);   // polls slowly and only while the tab is visible (keeps the free relay quota safe)
+(function tick() { setTimeout(() => { if (!document.hidden) refresh(); tick(); }, watching ? 5000 : 10000); })();   // slower when nobody is watching, to protect the free relay quota
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
-if (MOCK) $("status").textContent = "Mock mode: sample data, nothing is sent to the stream";
-refresh(); loadMe().then(() => { const a = sessionStorage.getItem("ms_after"); if (token && a) afterLogin(); });
+renderDonate(); refresh(); loadMe().then(() => { const a = sessionStorage.getItem("ms_after"); if (token && a) afterLogin(); });
 </script>
 </body>
 </html>
