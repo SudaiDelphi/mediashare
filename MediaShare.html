@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Media Share</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* Plain functional styling only. Restyle later: colors live in the variables below. */
+:root{--accent:#a374f9;--bg:#111;--panel:#1b1b24;--fg:#eee}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 16px;border-bottom:2px solid var(--accent)}
+h1{margin:0;font-size:20px} h2{margin:0 0 8px;font-size:16px}
+main{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:16px;padding:16px;max-width:1200px;margin:auto}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid #333;border-radius:6px;padding:12px;margin-bottom:16px}
+#player{position:relative;aspect-ratio:16/9;background:#000}
+#player>*{position:absolute;inset:0;width:100%;height:100%;border:0}
+#pmsg{display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;color:#aaa}
+#bar{height:8px;background:#333;margin-top:8px}#fill{height:100%;width:0;background:var(--accent)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.badge{padding:1px 8px;background:var(--accent);color:#000;font-size:12px;font-weight:700}
+ol{margin:0;padding-left:22px} li{margin:6px 0} .dim{color:#aaa;font-size:13px}
+input[type=text],input[type=number]{padding:8px;background:#0c0c10;color:var(--fg);border:1px solid #444}
+input[type=text]{width:100%}
+button{padding:7px 12px;cursor:pointer}
+.tabs button{border:1px solid #444;background:#0c0c10;color:var(--fg)} .tabs button.active{background:var(--accent);color:#000}
+.hide{display:none} footer{text-align:center;padding:16px} a{color:var(--accent)}
+pre{white-space:pre-wrap;margin:8px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Media Share</h1>
+  <div class="row" style="margin:0"><span id="status" class="dim"></span><span id="who"></span><button id="logout" class="hide">Log out</button></div>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Now playing</h2>
+      <div id="player"><div id="yt"></div><div id="pmsg">Click "Watch here" to follow along with the stream.</div></div>
+      <div id="bar"><div id="fill"></div></div>
+      <div id="title" style="font-weight:700;margin-top:8px">Nothing playing</div>
+      <div id="by" class="dim"></div>
+      <div class="row"><button id="watch">Watch here</button><label class="dim">Volume <input id="vol" type="range" min="0" max="100" value="50"></label></div>
+    </section>
+    <section>
+      <div class="row tabs" style="margin:0 0 10px"><button data-tab="queue" class="active">Queue</button><button data-tab="recent">Recently played</button><button data-tab="mine">My submissions</button><button data-tab="mod" id="modtab" class="hide">Moderator</button></div>
+      <div id="tab-queue"><ol id="queue"></ol><div id="qempty" class="dim">The queue is empty.</div></div>
+      <div id="tab-recent" class="hide"><ol id="recent"></ol><div id="rempty" class="dim">Nothing played yet.</div></div>
+      <div id="tab-mine" class="hide"><div id="mineMsg" class="dim"></div><div id="credit" class="badge hide"></div><ol id="mine"></ol></div>
+      <div id="tab-mod" class="hide"><div id="modBtns" class="row" style="margin-top:0"></div><h2 style="margin-top:14px">Queue</h2><ol id="modq"></ol><h2 style="margin-top:14px">Waiting for review</h2><ol id="modrev"></ol><div id="revEmpty" class="dim">Nothing waiting.</div><pre id="modlog" class="dim"></pre></div>
+    </section>
+  </div>
+  <div>
+    <section class="dim">
+      <h2 style="color:var(--fg)">How to request</h2>
+      Requests are made on Twitch, not here.<br><br>
+      <b>Free:</b> type <code>!ms &lt;link&gt;</code> in chat, or just paste a link.<br>
+      <b>Bits:</b> cheer 100+ bits with the link in the message (250 bits = 1 sub).<br>
+      <b>Sub:</b> put the link in your resub message. First-time subs can't add a message: subscribe, then post <code>!ms &lt;link&gt;</code> and your priority slot is applied.<br>
+      <b>Channel points:</b> redeem the reward with the link as your message.<br>
+      <b>Tips/donations:</b> put the link in the donation message and donate under your Twitch name.<br>
+      Higher paid amounts go first, then channel points, then free. Nothing interrupts the song that is playing.<br>
+      Supported: YouTube links and direct audio/video files.<br>Each person can have a limited number of requests waiting, and a maximum video length, depending on their role. Type <code>!ms limits</code> in chat to see them.
+    </section>
+    <section>
+      <h2>Check a link first</h2>
+      <input id="clink" type="text" placeholder="Paste a link to see its title and whether it can play">
+      <div class="row"><button id="cbtn">Check</button></div>
+      <div id="cres" style="margin-top:8px"></div><div id="ccopy" class="row"></div>
+    </section>
+  </div>
+</main>
+<footer class="dim"><a href="#" id="modlink">Moderator login</a></footer>
+<div style="position:absolute;left:-9999px;top:0"><div id="chkp"></div></div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+/* ---------- config ---------- */
+// api = base URL of the relay. Empty = mock mode with sample data. clientId = your Twitch app's Client ID (public).
+const CFG = { api: "", channel: "sudaidelphi", clientId: "" };
+const P = new URLSearchParams(location.search);
+const API = (P.get("api") || CFG.api).replace(/\/$/, ""), MOCK = !API || P.get("mock");
+const $ = id => document.getElementById(id);
+const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+const ytId = u => { const m = String(u).match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/); return m ? m[1] : null; };
+function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
+let state = null, skew = 0, token = sessionStorage.getItem("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
+
+/* ---------- data layer (mock or relay) ----------
+   Relay API: GET /state | GET /me | POST /remove {id} | GET /mod/check | POST /mod {cmd}
+   (token calls send "Authorization: Bearer <twitch token>"; the relay validates every one) */
+const mock = { t0: Date.now(), review: [{ id: "r1abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample waiting for review (mock data)", by: "MockViewer", tag: "", dur: 19 }],
+  queue: [{ id: "q1", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample queued video (mock data)", by: "MockViewer", login: "mockviewer", tag: "250 Bits", dur: 19, eta: 0 },
+          { id: "q3", url: "https://youtu.be/jNQXAC9IVRw", title: "Your sample request (mock data)", by: "TestViewer", login: "testviewer", tag: "", dur: 19, eta: 0 }],
+  history: [{ title: "Sample played earlier (mock data)", by: "MockViewer", tag: "1 Sub", dur: 200 }, { title: "Another earlier sample (mock data)", by: "AnotherViewer", tag: "", dur: 180 }] };
+async function getState() {
+  if (MOCK) {
+    const dur = 19, now = Date.now();
+    mock.queue.forEach((q, i) => q.eta = Math.max(0, dur - ((now - mock.t0) / 1000) % dur) + mock.queue.slice(0, i).reduce((a, b) => a + b.dur, 0));
+    return { on: true, now: { id: "m1", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample now playing (mock data)", by: "MockViewer", tag: "100 Bits", dur }, pos: ((now - mock.t0) / 1000) % dur, playing: true, at: now, serverTime: now, queue: mock.queue, history: mock.history };
+  }
+  return (await fetch(API + "/state")).json();
+}
+async function api(path, opts) { opts = opts || {}; opts.headers = Object.assign({ "Content-Type": "application/json" }, token ? { Authorization: "Bearer " + token } : {}); return (await fetch(API + path, opts)).json(); }
+
+/* ---------- Twitch login (implicit flow). Only triggered when someone opens My submissions or the mod area ---------- */
+if (location.hash.includes("access_token")) {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get("state") === sessionStorage.getItem("ms_state")) { token = h.get("access_token"); sessionStorage.setItem("ms_token", token); }
+  history.replaceState(null, "", location.pathname + location.search);
+}
+function login(modScope) {
+  if (modScope) sessionStorage.setItem("ms_modscope", "1");
+  if (MOCK) { token = "mock"; sessionStorage.setItem("ms_token", token); return afterLogin(); }
+  const st = crypto.randomUUID(); sessionStorage.setItem("ms_state", st);
+  const u = new URL("https://id.twitch.tv/oauth2/authorize");   // mod login also asks to read which channels you moderate
+  u.search = new URLSearchParams({ client_id: CFG.clientId, redirect_uri: location.origin + location.pathname, response_type: "token", scope: modScope ? "user:read:moderated_channels" : "", state: st });
+  location.href = u;
+}
+$("logout").onclick = () => { token = null; me = null; modOK = false; ["ms_token", "ms_modscope", "ms_after"].forEach(k => sessionStorage.removeItem(k)); $("modtab").classList.add("hide"); renderMe(); showTab("queue"); };
+async function loadMe() {
+  if (!token) return renderMe();
+  try { me = MOCK ? { name: "TestViewer", credit: { tag: "1 Sub" } } : await api("/me"); if (me.error) { token = null; me = null; sessionStorage.removeItem("ms_token"); } } catch (e) { me = null; }
+  renderMe();
+}
+function renderMe() { $("who").textContent = me ? "Logged in as " + me.name : ""; $("logout").classList.toggle("hide", !me); renderMine(); }
+async function afterLogin() {
+  await loadMe(); const a = sessionStorage.getItem("ms_after"); sessionStorage.removeItem("ms_after");
+  if (a === "mod") openMod(); else if (a === "mine") showTab("mine");
+}
+
+/* ---------- tabs ---------- */
+function showTab(t) {
+  ["queue", "recent", "mine", "mod"].forEach(x => $("tab-" + x).classList.toggle("hide", x !== t));
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === t));
+  if (t === "mine") renderMine();
+}
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+/* ---------- my submissions ---------- */
+function renderMine() {
+  const box = $("mine"); box.replaceChildren(); $("mineMsg").replaceChildren(); $("credit").classList.add("hide");
+  if (!me) { const b = el("button", "Log in with Twitch"); b.onclick = () => { sessionStorage.setItem("ms_after", "mine"); login(false); }; $("mineMsg").append("Log in to see and remove your own requests. ", b); return; }
+  if (me.credit) { $("credit").textContent = "Saved priority slot: " + (me.credit.tag || "priority") + " (used on your next request)"; $("credit").classList.remove("hide"); }
+  const mine = state ? state.queue.filter(q => (q.login || q.by.toLowerCase()) === me.name.toLowerCase()) : [];
+  if (!mine.length) $("mineMsg").textContent = "You have nothing in the queue.";
+  mine.forEach(it => { const li = el("li", it.title + " "); if (it.tag) li.appendChild(el("span", it.tag, "badge")); const b = el("button", "Remove"); b.onclick = () => removeMine(it.id); li.append(" ", b); box.appendChild(li); });
+}
+async function removeMine(id) {
+  if (MOCK) mock.queue = mock.queue.filter(q => q.id !== id); else await api("/remove", { method: "POST", body: JSON.stringify({ id }) });
+  refresh(); setTimeout(refresh, 1500);
+}
+
+/* ---------- moderator area: UI is hidden until Twitch confirms you are the broadcaster or a mod; the relay re-checks every action ---------- */
+const MODBTN = [["Pause", "pause"], ["Resume", "resume"], ["Previous", "prev"], ["Next", "next"], ["Vol -5", "volume -5"], ["Vol +5", "volume +5"], ["Audio", "mode audio"], ["Video", "mode video"], ["Both", "mode both"], ["Thumbnail", "thumb toggle"], ["Visualizer", "viz toggle"], ["Lock", "lock"], ["Unlock", "unlock"], ["Power on", "on"], ["Power off", "off"], ["Review mode", "review toggle"], ["Clear queue", "clear"]];
+async function openMod() {
+  if (!token) { sessionStorage.setItem("ms_after", "mod"); return login(true); }
+  let ok = false; try { ok = MOCK || (await api("/mod/check")).mod === true; } catch (e) {}
+  if (!ok) {
+    if (sessionStorage.getItem("ms_modscope") !== "1") { sessionStorage.setItem("ms_after", "mod"); return login(true); }   // token had no mod scope yet
+    return alert("The moderator area is only for the broadcaster and channel moderators.");
+  }
+  modOK = true; $("modtab").classList.remove("hide"); showTab("mod"); renderMod();
+}
+$("modlink").onclick = e => { e.preventDefault(); openMod(); };
+function renderMod() {
+  if (!modOK) return;
+  loadReview();
+  const b = $("modBtns"); if (!b.children.length) MODBTN.forEach(([l, c]) => { const x = el("button", l); x.onclick = () => modSend(c); b.appendChild(x); });
+  const q = $("modq"); q.replaceChildren();
+  if (state) state.queue.forEach(it => { const li = el("li", it.title + " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); li.appendChild(x); q.appendChild(li); });
+}
+async function loadReview() {   // requests waiting for a mod to approve (only when review mode is on)
+  let list = []; try { list = MOCK ? mock.review : ((await api("/mod/review")).review || []); } catch (e) {}
+  const o = $("modrev"); o.replaceChildren(); $("revEmpty").classList.toggle("hide", list.length > 0);
+  list.forEach(it => {
+    const li = el("li", it.title + " - " + it.by + " ");
+    if (/^https?:\/\//.test(it.url)) { const a = el("a", "Open"); a.href = it.url; a.target = "_blank"; a.rel = "noopener"; li.append(a, " "); }
+    const ok = el("button", "Approve"); ok.onclick = () => modSend("approve " + it.id);
+    const no = el("button", "Deny"); no.onclick = () => modSend("deny " + it.id);
+    li.append(ok, " ", no); o.appendChild(li);
+  });
+}
+async function modSend(cmd) {
+  let r;
+  if (MOCK) {
+    if (cmd.startsWith("removeid ")) mock.queue = mock.queue.filter(q => "removeid " + q.id !== cmd);
+    const rv = cmd.match(/^(approve|deny) (\w+)/);
+    if (rv) { const i = mock.review.findIndex(x => x.id === rv[2]); if (i >= 0) { const it = mock.review.splice(i, 1)[0]; if (rv[1] === "approve") mock.queue.push(it); } }
+    r = { ok: true, message: "(mock) " + cmd };
+  }
+  else { try { r = await api("/mod", { method: "POST", body: JSON.stringify({ cmd }) }); } catch (e) { r = { message: "Couldn't reach the relay." }; } }
+  $("modlog").textContent = (r.message || (r.ok ? "Sent: " + cmd : "Failed: " + cmd)) + "\n" + $("modlog").textContent;
+  setTimeout(refresh, 1200);
+}
+
+/* ---------- link checker (uses a hidden YouTube player, no API key needed) ---------- */
+function copyBtns(url) {
+  const b = $("ccopy"); b.replaceChildren();
+  const f = el("button", "Copy: !ms link"); f.onclick = () => navigator.clipboard.writeText("!ms " + url);
+  const n = el("input"); n.type = "number"; n.min = 100; n.value = 100; n.style.width = "90px";
+  const c = el("button", "Copy cheer message"); c.onclick = () => navigator.clipboard.writeText("Cheer" + Math.max(100, +n.value || 100) + " " + url);
+  b.append(f, n, c);
+}
+$("cbtn").onclick = () => {
+  const url = $("clink").value.trim(), out = $("cres"); out.replaceChildren(); $("ccopy").replaceChildren();
+  if (!/^https?:\/\/\S+$/.test(url)) return out.append("Paste a full link starting with https://");
+  const id = ytId(url);
+  if (!id) { const f = /\.(mp3|mp4|webm|ogg|m4a|wav)(\?.*)?$/i.test(url); out.append(f ? "Direct file: the title can't be previewed, but it should be accepted." : "That site isn't supported. Use YouTube or a direct audio/video file."); if (f) copyBtns(url); return; }
+  if (!chk) return out.append("Player is still loading, try again in a second.");
+  out.append("Checking..."); clearTimeout(chkTimer);
+  chkTimer = setTimeout(() => { if (out.textContent === "Checking...") out.textContent = "Couldn't verify that link."; }, 8000);
+  chk.pendingUrl = url; chk.cueVideoById(id);
+};
+function checkDone(ok, title, dur, code) {
+  const out = $("cres"); clearTimeout(chkTimer); out.replaceChildren();
+  if (!ok) return out.append(code === 100 ? "Video not found or private." : "That video can't be embedded, so it can't be played here or on stream.");
+  out.append("OK: " + title + " (" + fmt(dur) + ")"); copyBtns(chk.pendingUrl);
+}
+
+/* ---------- rendering + watch-along ---------- */
+const expected = () => state && state.now ? state.pos + (state.playing ? (Date.now() + skew - state.at) / 1000 : 0) : 0;
+function listInto(id, items, fn) { const o = $(id); o.replaceChildren(); items.forEach(it => { const li = el("li", it.title + " "); li.appendChild(el("span", "by " + it.by + " ", "dim")); if (it.tag) li.appendChild(el("span", it.tag, "badge")); li.appendChild(el("span", " " + fmt(it.dur) + fn(it), "dim")); o.appendChild(li); }); }
+function render() {
+  $("status").textContent = !state.on ? "Media share is currently off" : state.reviewOn ? "Requests are checked by mods before they play" : "";
+  const n = state.now;
+  $("title").textContent = n ? n.title : "Nothing playing";
+  $("by").replaceChildren(); if (n) { $("by").append("Requested by " + n.by + " "); if (n.tag) $("by").appendChild(el("span", n.tag, "badge")); }
+  listInto("queue", state.queue, it => " · starts in about " + Math.max(1, Math.round(Math.max(0, it.eta - (state.playing ? (Date.now() + skew - state.at) / 1000 : 0)) / 60)) + " min");
+  $("qempty").classList.toggle("hide", state.queue.length > 0);
+  listInto("recent", state.history || [], () => ""); $("rempty").classList.toggle("hide", (state.history || []).length > 0);
+  renderMine(); renderMod(); syncPlayer();
+}
+function syncPlayer() {
+  if (!watching || !ytReady) return;
+  const n = state.now, id = n && ytId(n.url);
+  if (!n || !id) { yt.stopVideo(); curId = null; $("pmsg").textContent = n ? "This one is a direct file and can't be shown here. Watch it on the stream." : "Nothing playing right now."; $("pmsg").classList.remove("hide"); return; }
+  $("pmsg").classList.add("hide");
+  const pos = Math.max(0, expected());
+  if (curId !== n.id) { curId = n.id; yt.loadVideoById({ videoId: id, startSeconds: pos }); yt.setVolume(+$("vol").value); }
+  else { if (Math.abs(yt.getCurrentTime() - pos) > 4) yt.seekTo(pos, true); state.playing ? yt.playVideo() : yt.pauseVideo(); }
+}
+window.onYouTubeIframeAPIReady = () => {
+  yt = new YT.Player("yt", { width: "100%", height: "100%", playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1, origin: location.origin }, events: { onReady() { ytReady = true; } } });
+  chk = new YT.Player("chkp", { width: 200, height: 200, events: { onStateChange(e) { if (e.data === 5) checkDone(true, chk.getVideoData().title, chk.getDuration()); }, onError(e) { checkDone(false, null, 0, e.data); } } });
+};
+$("watch").onclick = () => {
+  watching = !watching; $("watch").textContent = watching ? "Stop watching" : "Watch here";
+  if (!watching && yt) { yt.stopVideo(); curId = null; $("pmsg").textContent = 'Click "Watch here" to follow along with the stream.'; $("pmsg").classList.remove("hide"); }
+  else if (state) { curId = null; syncPlayer(); }
+};
+$("vol").oninput = () => yt && ytReady && yt.setVolume(+$("vol").value);
+
+async function refresh() {
+  try { state = await getState(); skew = state.serverTime - Date.now(); render(); }
+  catch (e) { $("status").textContent = "Can't reach the stream right now..."; }
+}
+setInterval(() => { if (state && state.now) { const d = state.now.dur || 0; $("fill").style.width = d ? Math.min(100, expected() / d * 100) + "%" : "0"; } }, 500);
+setInterval(() => { if (!document.hidden) refresh(); }, 10000);   // polls slowly and only while the tab is visible (keeps the free relay quota safe)
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+if (MOCK) $("status").textContent = "Mock mode: sample data, nothing is sent to the stream";
+refresh(); loadMe().then(() => { const a = sessionStorage.getItem("ms_after"); if (token && a) afterLogin(); });
+</script>
+</body>
+</html>

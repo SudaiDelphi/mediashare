@@ -114,13 +114,13 @@ function play(it) {
 function stop(quiet) {
   if (yt && ytReady) yt.stopVideo();
   $("vid").pause(); $("vid").removeAttribute("src");
-  state.playing = false;
+  state.playing = false; state.paused = false;
   if (!quiet) { $("card").classList.remove("on"); state.item = null; }
 }
 const act = {
   pause() { state.kind === "yt" ? yt && yt.pauseVideo() : $("vid").pause(); },
   resume() { state.kind === "yt" ? yt && yt.playVideo() : $("vid").play(); },
-  seek(t) { state.kind === "yt" ? yt.seekTo(t, true) : ($("vid").currentTime = t); },
+  seek(t) { state.kind === "yt" ? yt.seekTo(t, true) : ($("vid").currentTime = t); send("seeked", { ms_time: t }); },
 };
 
 /* ---------- YouTube player ---------- */
@@ -134,8 +134,10 @@ window.onYouTubeIframeAPIReady = () => {
           if (!state.playing) { state.playing = true; const d = yt.getVideoData(); 
             if (state.item) { if (!state.item.title) $("title").textContent = d.title; state.item.title = d.title; state.item.duration = yt.getDuration(); }
             send("started", { ms_title: d.title, ms_duration: yt.getDuration() }); }
+          if (state.paused) { state.paused = false; send("resumed", { ms_time: yt.getCurrentTime() }); }
           applyMode();
         }
+        if (e.data === YT.PlayerState.PAUSED && state.playing) { state.paused = true; send("paused", { ms_time: yt.getCurrentTime() }); }
         if (e.data === YT.PlayerState.ENDED) { state.playing = false; send("ended"); }
       },
       onError(e) { send("error", { ms_reason: "youtube error " + e.data }); }   // 101/150 = embedding disabled
@@ -143,6 +145,8 @@ window.onYouTubeIframeAPIReady = () => {
 };
 $("vid").onplaying = () => { if (!state.playing) { state.playing = true; send("started", { ms_duration: $("vid").duration }); } };
 $("vid").onended = () => { state.playing = false; send("ended"); };
+$("vid").onpause = () => { if ($("vid").getAttribute("src") && !$("vid").ended && state.playing) { state.paused = true; send("paused", { ms_time: $("vid").currentTime }); } };
+$("vid").onplay = () => { if (state.paused) { state.paused = false; send("resumed", { ms_time: $("vid").currentTime }); } };
 $("vid").onerror = () => send("error", { ms_reason: "file failed to load" });
 
 /* ---------- progress + visualizer ---------- */
