@@ -31,6 +31,7 @@ body.audio.thumb-off #stage{height:2px;aspect-ratio:auto;overflow:hidden}
 #demo input{width:100%;padding:6px}
 #demo button{padding:5px 8px;cursor:pointer}
 #status{position:fixed;top:4px;left:6px;font-size:11px;opacity:.6;display:none}
+#dbg{display:none;position:fixed;top:6px;left:6px;max-width:70%;background:rgba(0,0,0,.8);color:#8f8;padding:8px;font:12px monospace;white-space:pre-wrap;z-index:99}
 </style>
 </head>
 <body class="viz-on">
@@ -47,6 +48,7 @@ body.audio.thumb-off #stage{height:2px;aspect-ratio:auto;overflow:hidden}
   </div>
 </div>
 <div id="status"></div>
+<pre id="dbg"></pre>
 <div id="demo">
   <input id="dUrl" placeholder="Paste a YouTube or direct .mp3/.mp4 link">
   <input id="dTag" placeholder="Priority badge text (optional, e.g. 250 Bits)">
@@ -59,6 +61,7 @@ body.audio.thumb-off #stage{height:2px;aspect-ratio:auto;overflow:hidden}
 <script>
 /* ---------- config (URL params: ?host=127.0.0.1&port=8080&demo=1&accent=ff00aa&scale=1) ---------- */
 const P = new URLSearchParams(location.search);
+const DEBUG = !!P.get("debug");   // ?debug=1 in a normal browser tab: shows what Streamer.bot sends, plays nothing, reports nothing
 const HOST = P.get("host") || "127.0.0.1", PORT = P.get("port") || "8080";
 const ACTION = "Media Share Controller";
 if (P.get("accent")) document.documentElement.style.setProperty("--accent", "#" + P.get("accent"));
@@ -75,7 +78,7 @@ function ytId(u) {
   return m ? m[1] : null;
 }
 function send(event, extra) {   // overlay -> Streamer.bot (runs the controller action with args)
-  if (!ws || ws.readyState !== 1) return;
+  if (DEBUG || !ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({ request: "DoAction", id: "ms" + Date.now(), action: { name: ACTION },
     args: Object.assign({ ms_event: event, ms_id: state.item ? state.item.id : "" }, extra || {}) }));
 }
@@ -157,11 +160,12 @@ setInterval(() => {
   else if (state.kind === "file") { t = $("vid").currentTime; d = $("vid").duration; playing = !$("vid").paused; }
   if (d) { $("cur").textContent = fmt(t); $("dur").textContent = fmt(d); $("fill").style.width = (t / d * 100) + "%"; }
   /* simulated visualizer: browsers can't read audio out of a YouTube iframe, so bars are animated while playing */
-  [...bars.children].forEach((b, i) => b.style.height = playing ? (10 + Math.abs(Math.sin(Date.now() / 300 + i * .7)) * 35 + Math.random() * 45) + "%" : "6%");
+  [...bars.children].forEach((b, i) => b.style.height = (playing || DEBUG) ? (10 + Math.abs(Math.sin(Date.now() / 300 + i * .7)) * 35 + Math.random() * 45) + "%" : "6%");
 }, 100);
 
 /* ---------- Streamer.bot WebSocket (Streamer.bot -> overlay) ---------- */
 function handle(m) {
+  if (DEBUG && !["mode", "thumbnail", "visualizer", "volume"].includes(m.cmd)) return;   // debug tabs only show the look changes
   switch (m.cmd) {
     case "play": play(m.item); break;
     case "pause": act.pause(); break;
@@ -180,10 +184,16 @@ function connect() {
     ws.send(JSON.stringify({ request: "Subscribe", id: "sub", events: { General: ["Custom"] } }));
     $("status").textContent = "connected"; send("hello");     // controller replies with current state
   };
-  ws.onmessage = e => { try { const d = JSON.parse(e.data); const m = d.data && d.data.source === "mediashare" ? d.data : (d.source === "mediashare" ? d : null); if (m) handle(m); } catch (_) {} };
+  ws.onmessage = e => { try { const d = JSON.parse(e.data); const m = d.data && d.data.source === "mediashare" ? d.data : (d.source === "mediashare" ? d : null); if (m) { handle(m); dbg(m); } } catch (err) { console.error("media share overlay:", err); if (DEBUG) dbg("error: " + err.message); } };
   ws.onclose = () => { $("status").textContent = "reconnecting..."; setTimeout(connect, 3000); };
 }
+const dbgLines = [];
+function dbg(m) {
+  dbgLines.unshift(new Date().toLocaleTimeString() + "  " + JSON.stringify(m)); dbgLines.length = Math.min(dbgLines.length, 8);
+  $("dbg").textContent = "DEBUG VIEW (this tab plays nothing and reports nothing)\nconnection: " + $("status").textContent + "\nbody classes: " + document.body.className + "\n\n" + dbgLines.join("\n");
+}
 connect();
+if (DEBUG) { $("dbg").style.display = "block"; showItem({ id: "debug", url: "https://youtu.be/jNQXAC9IVRw", title: "Debug preview (nothing plays in this tab)", by: "debug", duration: 100 }); dbg("waiting for commands from Streamer.bot..."); }
 
 /* ---------- demo panel (?demo=1): test without Streamer.bot ---------- */
 if (P.get("demo")) {

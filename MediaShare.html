@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Media Share</title>
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 /* Plain functional styling only. Restyle later: colors live in the variables below. */
@@ -25,7 +26,7 @@ input[type=text],input[type=number]{padding:8px;background:#0c0c10;color:var(--f
 input[type=text]{width:100%}
 button{padding:7px 12px;cursor:pointer}
 .tabs button{border:1px solid #444;background:#0c0c10;color:var(--fg)} .tabs button.active{background:var(--accent);color:#000}
-.hide{display:none} footer{text-align:center;padding:16px} a{color:var(--accent)}
+.hide{display:none!important} footer{text-align:center;padding:16px} a{color:var(--accent)}
 pre{white-space:pre-wrap;margin:8px 0 0}
 </style>
 </head>
@@ -50,7 +51,7 @@ pre{white-space:pre-wrap;margin:8px 0 0}
       <div id="tab-queue"><ol id="queue"></ol><div id="qempty" class="dim">The queue is empty.</div></div>
       <div id="tab-recent" class="hide"><ol id="recent"></ol><div id="rempty" class="dim">Nothing played yet.</div></div>
       <div id="tab-mine" class="hide"><div id="mineMsg" class="dim"></div><div id="credit" class="badge hide"></div><ol id="mine"></ol></div>
-      <div id="tab-mod" class="hide"><div id="modBtns" class="row" style="margin-top:0"></div><h2 style="margin-top:14px">Queue</h2><ol id="modq"></ol><h2 style="margin-top:14px">Waiting for review</h2><ol id="modrev"></ol><div id="revEmpty" class="dim">Nothing waiting.</div><pre id="modlog" class="dim"></pre></div>
+      <div id="tab-mod" class="hide"><div id="modpoll" class="dim" style="margin-bottom:8px"></div><div id="modBtns" class="row" style="margin-top:0"></div><h2 style="margin-top:14px">Queue</h2><ol id="modq"></ol><h2 style="margin-top:14px">Waiting for review</h2><ol id="modrev"></ol><div id="revEmpty" class="dim">Nothing waiting.</div><pre id="modlog" class="dim"></pre></div>
     </section>
   </div>
   <div>
@@ -87,14 +88,14 @@ pre{white-space:pre-wrap;margin:8px 0 0}
 <script>
 /* ---------- config ---------- */
 // api = base URL of the relay. Empty = mock mode with sample data. clientId = your Twitch app's Client ID (public).
-const CFG = Object.assign({ api: "", channel: "sudaidelphi", clientId: "", donate: [] }, window.MS_CONFIG || {});   // values come from config.js
+const CFG = Object.assign({ api: "", channel: "sudaidelphi", clientId: "", donate: [], fastPollMs: 3000, slowPollMs: 10000 }, window.MS_CONFIG || {});   // values come from config.js
 const P = new URLSearchParams(location.search);
 const API = (P.get("api") || CFG.api).replace(/\/$/, ""), MOCK = !API || P.get("mock");
 const $ = id => document.getElementById(id);
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 const ytId = u => { const m = String(u).match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/); return m ? m[1] : null; };
 function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
-let lastOk = null, ytFailTimer = null, state = null, skew = 0, token = sessionStorage.getItem("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
+let lastChange = Date.now(), sig = "", stuckSince = 0, needClick = false, lastOk = null, ytFailTimer = null, state = null, skew = 0, token = sessionStorage.getItem("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
 
 /* ---------- data layer (mock or relay) ----------
    Relay API: GET /state | GET /me | POST /remove {id} | GET /mod/check | POST /mod {cmd}
@@ -159,7 +160,7 @@ function renderMine() {
 }
 async function removeMine(id) {
   if (MOCK) mock.queue = mock.queue.filter(q => q.id !== id); else await api("/remove", { method: "POST", body: JSON.stringify({ id }) });
-  refresh(); setTimeout(refresh, 1500);
+  refresh(); setTimeout(refresh, 1500); setTimeout(refresh, 4500);
 }
 
 /* ---------- moderator area: UI is hidden until Twitch confirms you are the broadcaster or a mod; the relay re-checks every action ---------- */
@@ -177,6 +178,8 @@ $("modlink").onclick = e => { e.preventDefault(); openMod(); };
 function renderMod() {
   if (!modOK) return;
   loadReview();
+  const pa = state ? state.polledAgo : null;   // how long ago Streamer.bot last asked the relay for panel actions
+  $("modpoll").textContent = MOCK ? "" : (pa == null || pa > 90) ? "Streamer.bot is not picking up panel actions right now. Check that its 3-second timed action is on. Buttons you press are queued and will run once it does." : "Streamer.bot is picking up panel actions.";
   const b = $("modBtns"); if (!b.children.length) MODBTN.forEach(([l, c]) => { const x = el("button", l); x.onclick = () => modSend(c); b.appendChild(x); });
   const q = $("modq"); q.replaceChildren();
   if (state) state.queue.forEach(it => { const li = el("li", it.title + " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); li.appendChild(x); q.appendChild(li); });
@@ -201,8 +204,8 @@ async function modSend(cmd) {
     r = { ok: true, message: "(mock) " + cmd };
   }
   else { try { r = await api("/mod", { method: "POST", body: JSON.stringify({ cmd }) }); } catch (e) { r = { message: "Couldn't reach the relay." }; } }
-  $("modlog").textContent = (r.message || (r.ok ? "Sent: " + cmd : "Failed: " + cmd)) + "\n" + $("modlog").textContent;
-  setTimeout(refresh, 1200);
+  $("modlog").textContent = (r.ok ? "Queued: " + cmd + " (Streamer.bot runs it within about 3 s)" : (r.message || "Failed: " + cmd)) + "\n" + $("modlog").textContent;
+  setTimeout(refresh, 1200); setTimeout(refresh, 4000);   // the mod action reaches Streamer.bot within about 3 s
 }
 
 /* ---------- link checker (uses a hidden YouTube player, no API key needed) ---------- */
@@ -250,14 +253,14 @@ function syncPlayer() {   // keeps the embedded player on the same video and pos
   const n = state.now, id = n && ytId(n.url);
   if (!n) { yt.stopVideo(); curId = null; return pmsg("Nothing is playing right now. The video will appear here when the next song starts.", false); }
   if (!id) { yt.stopVideo(); curId = null; return pmsg("This one is a direct file and can't be shown here. Watch it on the stream.", false); }
-  pmsg("", true);
+  if (!needClick) pmsg("", true);
   const pos = Math.max(0, expected());
   if (curId !== n.id) { curId = n.id; yt.loadVideoById({ videoId: id, startSeconds: pos }); yt.setVolume(+$("vol").value); }
   else { if (Math.abs(yt.getCurrentTime() - pos) > 4) yt.seekTo(pos, true); state.playing ? yt.playVideo() : yt.pauseVideo(); }
 }
 window.onYouTubeIframeAPIReady = () => {
   clearTimeout(ytFailTimer);
-  yt = new YT.Player("yt", { width: "100%", height: "100%", playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1, origin: location.origin }, events: { onReady() { ytReady = true; if (watching) syncPlayer(); } } });
+  yt = new YT.Player("yt", { width: "100%", height: "100%", playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1, origin: location.origin }, events: { onReady() { ytReady = true; if (watching) syncPlayer(); }, onError(e) { const why = { 2: "the link is invalid", 5: "this video can't be played in an embedded player", 100: "the video was removed or is private", 101: "the owner doesn't allow embedding", 150: "the owner doesn't allow embedding", 153: "YouTube rejected the embed because no referrer was sent" }[e.data] || "error " + e.data; pmsg("YouTube couldn't play this video here (" + why + "). Watch it on the stream.", false); } } });
   chk = new YT.Player("chkp", { width: 200, height: 200, events: { onStateChange(e) { if (e.data === 5) checkDone(true, chk.getVideoData().title, chk.getDuration()); }, onError(e) { checkDone(false, null, 0, e.data); } } });
 };
 const BLOCKED_TEXT = "The YouTube player could not load. A browser extension (ad blocker or privacy tool) may be blocking youtube.com. Allow it for this page and reload.";
@@ -270,7 +273,7 @@ function toggleWatch() {
   clearTimeout(ytFailTimer); ytFailTimer = setTimeout(() => { if (!ytReady && watching) pmsg(BLOCKED_TEXT, false); }, 8000);
 }
 $("watch").onclick = toggleWatch;
-$("pmsg").onclick = () => { if (!watching) toggleWatch(); };
+$("pmsg").onclick = () => { if (!watching) toggleWatch(); else if (ytReady) { yt.playVideo(); needClick = false; pmsg("", true); } };   // also the "click to start" fallback if autoplay is blocked
 $("vol").oninput = () => yt && ytReady && yt.setVolume(+$("vol").value);
 
 function renderDonate() {   // donation links come from config.js
@@ -283,15 +286,26 @@ async function refresh() {
     const s = await getState();
     if (!s || s.error || !Array.isArray(s.queue)) throw new Error(s && s.error ? "the relay reported: " + s.error : "unexpected reply");
     s.history = s.history || []; state = s; skew = s.serverTime - Date.now(); lastOk = new Date();
-    $("banner").textContent = MOCK ? "Mock mode: sample data, nothing is sent to the stream" : ""; render();
+    const g = JSON.stringify([s.on, s.now && s.now.id, s.playing, s.queue.map(q => q.id), (s.review || []).length, s.reviewOn]);
+    if (g !== sig) { sig = g; lastChange = Date.now(); }
+    const age = (s.serverTime - s.at) / 1000;
+    $("banner").textContent = MOCK ? "Mock mode: sample data, nothing is sent to the stream" : (!s.waiting && age > 180) ? "Streamer.bot has not updated the relay for " + Math.round(age / 60) + " min. Is it running, with the 3-second timed action turned on?" : "";
+    render();
   } catch (e) {
     const hint = e.message === "Failed to fetch" ? "network or CORS problem: check the Worker address in config.js and ALLOWED_ORIGIN in Cloudflare" : /HTTP 5/.test(e.message) ? e.message + ": the relay is reachable but failing; check its D1 binding and variables" : e.message;
     $("banner").textContent = "Can't reach the stream right now (" + hint + ").";
   }
-  $("diag").textContent = (MOCK ? "Mock mode" : "Relay: " + new URL(API).host) + (lastOk ? " · updated " + lastOk.toLocaleTimeString() : " · no data yet");
+  $("diag").textContent = (MOCK ? "Mock mode" : "Relay: " + new URL(API).host) + (lastOk ? " · page updated " + lastOk.toLocaleTimeString() : " · no data yet") + (state && !MOCK ? (state.waiting ? " · Streamer.bot has not connected yet" : " · Streamer.bot last pushed " + Math.round((state.serverTime - state.at) / 1000) + " s ago") : "");
 }
-setInterval(() => { if (state && state.now) { const d = state.now.dur || 0; $("fill").style.width = d ? Math.min(100, expected() / d * 100) + "%" : "0"; } }, 500);
-(function tick() { setTimeout(() => { if (!document.hidden) refresh(); tick(); }, watching ? 5000 : 10000); })();   // slower when nobody is watching, to protect the free relay quota
+setInterval(() => {
+  if (state && state.now) { const d = state.now.dur || 0; $("fill").style.width = d ? Math.min(100, expected() / d * 100) + "%" : "0"; }
+  // watchdog: if the video sits un-started for 6 seconds the browser probably blocked autoplay, so offer a click-to-start button
+  if (watching && ytReady && state && state.now && state.playing && curId && [-1, 5].includes(yt.getPlayerState())) {
+    if (!stuckSince) stuckSince = Date.now(); else if (Date.now() - stuckSince > 6000) { needClick = true; pmsg("▶ Click here to start the video (your browser blocked autoplay)", false); }
+  } else { stuckSince = 0; if (needClick && ytReady && yt.getPlayerState() === 1) { needClick = false; pmsg("", true); } }
+}, 500);
+// Polls fast (3 s) while something is changing, while watching, or while the mod panel is open, and slowly (10 s) when quiet. Streamer.bot pushes every change to the relay instantly.
+(function tick() { setTimeout(() => { if (!document.hidden) refresh(); tick(); }, (watching || modOK || Date.now() - lastChange < 300000) ? CFG.fastPollMs : CFG.slowPollMs); })();
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 renderDonate(); refresh(); loadMe().then(() => { const a = sessionStorage.getItem("ms_after"); if (token && a) afterLogin(); });
 </script>
