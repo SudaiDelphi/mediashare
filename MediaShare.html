@@ -51,14 +51,15 @@ pre{white-space:pre-wrap;margin:8px 0 0}
       <div id="tab-queue"><ol id="queue"></ol><div id="qempty" class="dim">The queue is empty.</div></div>
       <div id="tab-recent" class="hide"><ol id="recent"></ol><div id="rempty" class="dim">Nothing played yet.</div></div>
       <div id="tab-mine" class="hide"><div id="mineMsg" class="dim"></div><div id="credit" class="badge hide"></div><ol id="mine"></ol></div>
-      <div id="tab-mod" class="hide"><div id="modpoll" class="dim" style="margin-bottom:8px"></div><div id="modBtns" class="row" style="margin-top:0"></div><h2 style="margin-top:14px">Queue</h2><ol id="modq"></ol><h2 style="margin-top:14px">Waiting for review</h2><ol id="modrev"></ol><div id="revEmpty" class="dim">Nothing waiting.</div><pre id="modlog" class="dim"></pre></div>
+      <div id="tab-mod" class="hide"><div id="modpoll" class="dim" style="margin-bottom:8px"></div><div id="modBtns" class="row" style="margin-top:0"></div>
+      <div id="modprev" class="hide" style="margin-top:12px"><div style="position:relative;aspect-ratio:16/9;background:#000"><div id="prevp" style="position:absolute;inset:0"></div><video id="prevv" controls class="hide" style="position:absolute;inset:0;width:100%;height:100%"></video></div><div class="row"><span id="prevtitle" class="dim"></span><button id="prevclose">Close preview</button></div></div><h2 style="margin-top:14px">Queue</h2><ol id="modq"></ol><h2 style="margin-top:14px">Waiting for review</h2><ol id="modrev"></ol><div id="revEmpty" class="dim">Nothing waiting.</div><pre id="modlog" class="dim"></pre></div>
     </section>
   </div>
   <div>
     <section class="dim">
       <h2 style="color:var(--fg)">How to request</h2>
       Requests are made on Twitch, not here.<br><br>
-      <b>Free:</b> type <code>!ms &lt;link&gt;</code> in chat, or just paste a link.<br>
+      <b>Free:</b> type <code>!ms &lt;link&gt;</code> or <code>!ms song name</code> in chat, or just paste a link.<br>
       <b>Bits:</b> cheer 100+ bits with the link in the message (250 bits = 1 sub).<br>
       <b>Sub:</b> put the link in your resub message. First-time subs can't add a message: subscribe, then post <code>!ms &lt;link&gt;</code> and your priority slot is applied.<br>
       <b>Channel points:</b> redeem the reward with the link as your message.<br>
@@ -95,7 +96,7 @@ const $ = id => document.getElementById(id);
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 const ytId = u => { const m = String(u).match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/); return m ? m[1] : null; };
 function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
-let lastChange = Date.now(), sig = "", stuckSince = 0, needClick = false, lastOk = null, ytFailTimer = null, state = null, skew = 0, token = sessionStorage.getItem("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
+let prev = null, lastChange = Date.now(), sig = "", stuckSince = 0, needClick = false, lastOk = null, ytFailTimer = null, state = null, skew = 0, token = sessionStorage.getItem("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
 
 /* ---------- data layer (mock or relay) ----------
    Relay API: GET /state | GET /me | POST /remove {id} | GET /mod/check | POST /mod {cmd}
@@ -103,7 +104,7 @@ let lastChange = Date.now(), sig = "", stuckSince = 0, needClick = false, lastOk
 const mock = { t0: Date.now(), review: [{ id: "r1abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample waiting for review (mock data)", by: "MockViewer", tag: "", dur: 19 }],
   queue: [{ id: "q1", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample queued video (mock data)", by: "MockViewer", login: "mockviewer", tag: "250 Bits", dur: 19, eta: 0 },
           { id: "q3", url: "https://youtu.be/jNQXAC9IVRw", title: "Your sample request (mock data)", by: "TestViewer", login: "testviewer", tag: "", dur: 19, eta: 0 }],
-  history: [{ title: "Sample played earlier (mock data)", by: "MockViewer", tag: "1 Sub", dur: 200 }, { title: "Another earlier sample (mock data)", by: "AnotherViewer", tag: "", dur: 180 }] };
+  history: [{ url: "https://youtu.be/jNQXAC9IVRw", title: "Sample played earlier (mock data)", by: "MockViewer", tag: "1 Sub", dur: 200 }, { url: "https://youtu.be/jNQXAC9IVRw", title: "Another earlier sample (mock data)", by: "AnotherViewer", tag: "", dur: 180 }] };
 async function getState() {
   if (MOCK) {
     const dur = 19, now = Date.now();
@@ -156,7 +157,7 @@ function renderMine() {
   if (me.credit) { $("credit").textContent = "Saved priority slot: " + (me.credit.tag || "priority") + " (used on your next request)"; $("credit").classList.remove("hide"); }
   const mine = state ? state.queue.filter(q => (q.login || q.by.toLowerCase()) === me.name.toLowerCase()) : [];
   if (!mine.length) $("mineMsg").textContent = "You have nothing in the queue.";
-  mine.forEach(it => { const li = el("li", it.title + " "); if (it.tag) li.appendChild(el("span", it.tag, "badge")); const b = el("button", "Remove"); b.onclick = () => removeMine(it.id); li.append(" ", b); box.appendChild(li); });
+  mine.forEach(it => { const li = el("li"); li.append(linkTitle(it), " "); if (it.tag) li.appendChild(el("span", it.tag, "badge")); const b = el("button", "Remove"); b.onclick = () => removeMine(it.id); li.append(" ", b); box.appendChild(li); });
 }
 async function removeMine(id) {
   if (MOCK) mock.queue = mock.queue.filter(q => q.id !== id); else await api("/remove", { method: "POST", body: JSON.stringify({ id }) });
@@ -182,8 +183,16 @@ function renderMod() {
   $("modpoll").textContent = MOCK ? "" : (pa == null || pa > 90) ? "Streamer.bot is not picking up panel actions right now. Check that its 3-second timed action is on. Buttons you press are queued and will run once it does." : "Streamer.bot is picking up panel actions.";
   const b = $("modBtns"); if (!b.children.length) MODBTN.forEach(([l, c]) => { const x = el("button", l); x.onclick = () => modSend(c); b.appendChild(x); });
   const q = $("modq"); q.replaceChildren();
-  if (state) state.queue.forEach(it => { const li = el("li", it.title + " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); li.appendChild(x); q.appendChild(li); });
+  if (state) state.queue.forEach(it => { const li = el("li", it.title + " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", x); q.appendChild(li); });
 }
+function preview(it) {   // moderators: watch a queued or waiting request in the page before deciding
+  $("modprev").classList.remove("hide"); $("prevtitle").textContent = it.title + " (requested by " + it.by + ")";
+  const id = ytId(it.url);
+  if (id && prev && prev.loadVideoById) { $("prevv").pause(); $("prevv").classList.add("hide"); $("prevp").classList.remove("hide"); prev.loadVideoById(id); }
+  else if (!id && /^https?:\/\//.test(it.url || "")) { if (prev && prev.stopVideo) prev.stopVideo(); $("prevp").classList.add("hide"); $("prevv").classList.remove("hide"); $("prevv").src = it.url; $("prevv").play().catch(() => {}); }
+  else $("prevtitle").textContent += " - the YouTube player isn't ready yet, try again in a second";
+}
+$("prevclose").onclick = () => { if (prev && prev.stopVideo) prev.stopVideo(); $("prevv").pause(); $("prevv").removeAttribute("src"); $("modprev").classList.add("hide"); };
 async function loadReview() {   // requests waiting for a mod to approve (only when review mode is on)
   let list = []; try { list = MOCK ? mock.review : ((await api("/mod/review")).review || []); } catch (e) {}
   const o = $("modrev"); o.replaceChildren(); $("revEmpty").classList.toggle("hide", list.length > 0);
@@ -192,7 +201,7 @@ async function loadReview() {   // requests waiting for a mod to approve (only w
     if (/^https?:\/\//.test(it.url)) { const a = el("a", "Open"); a.href = it.url; a.target = "_blank"; a.rel = "noopener"; li.append(a, " "); }
     const ok = el("button", "Approve"); ok.onclick = () => modSend("approve " + it.id);
     const no = el("button", "Deny"); no.onclick = () => modSend("deny " + it.id);
-    li.append(ok, " ", no); o.appendChild(li);
+    const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", ok, " ", no); o.appendChild(li);
   });
 }
 async function modSend(cmd) {
@@ -234,11 +243,15 @@ function checkDone(ok, title, dur, code) {
 
 /* ---------- rendering + watch-along ---------- */
 const expected = () => state && state.now ? state.pos + (state.playing ? (Date.now() + skew - state.at) / 1000 : 0) : 0;
-function listInto(id, items, fn) { const o = $(id); o.replaceChildren(); items.forEach(it => { const li = el("li", it.title + " "); li.appendChild(el("span", "by " + it.by + " ", "dim")); if (it.tag) li.appendChild(el("span", it.tag, "badge")); li.appendChild(el("span", " " + fmt(it.dur) + fn(it), "dim")); o.appendChild(li); }); }
+function linkTitle(it) {   // titles open the video on YouTube (or the file) in a new tab
+  if (it.url && /^https?:\/\//.test(it.url)) { const a = el("a", it.title); a.href = it.url; a.target = "_blank"; a.rel = "noopener"; return a; }
+  return document.createTextNode(it.title);
+}
+function listInto(id, items, fn) { const o = $(id); o.replaceChildren(); items.forEach(it => { const li = el("li"); li.append(linkTitle(it), " "); li.appendChild(el("span", "by " + it.by + " ", "dim")); if (it.tag) li.appendChild(el("span", it.tag, "badge")); li.appendChild(el("span", " " + fmt(it.dur) + fn(it), "dim")); o.appendChild(li); }); }
 function render() {
   $("status").textContent = state.waiting ? "Waiting for the stream to connect..." : !state.on ? "Media share is currently off" : state.reviewOn ? "Requests are checked by mods before they play" : "";
   const n = state.now;
-  $("title").textContent = n ? n.title : "Nothing playing";
+  $("title").replaceChildren(n ? linkTitle(n) : document.createTextNode("Nothing playing"));
   $("by").replaceChildren(); if (n) { $("by").append("Requested by " + n.by + " "); if (n.tag) $("by").appendChild(el("span", n.tag, "badge")); }
   listInto("queue", state.queue, it => " · starts in about " + Math.max(1, Math.round(Math.max(0, it.eta - (state.playing ? (Date.now() + skew - state.at) / 1000 : 0)) / 60)) + " min");
   $("qempty").classList.toggle("hide", state.queue.length > 0);
@@ -261,6 +274,7 @@ function syncPlayer() {   // keeps the embedded player on the same video and pos
 window.onYouTubeIframeAPIReady = () => {
   clearTimeout(ytFailTimer);
   yt = new YT.Player("yt", { width: "100%", height: "100%", playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1, origin: location.origin }, events: { onReady() { ytReady = true; if (watching) syncPlayer(); }, onError(e) { const why = { 2: "the link is invalid", 5: "this video can't be played in an embedded player", 100: "the video was removed or is private", 101: "the owner doesn't allow embedding", 150: "the owner doesn't allow embedding", 153: "YouTube rejected the embed because no referrer was sent" }[e.data] || "error " + e.data; pmsg("YouTube couldn't play this video here (" + why + "). Watch it on the stream.", false); } } });
+  prev = new YT.Player("prevp", { width: "100%", height: "100%", playerVars: { rel: 0, playsinline: 1, origin: location.origin } });   // moderator preview player
   chk = new YT.Player("chkp", { width: 200, height: 200, events: { onStateChange(e) { if (e.data === 5) checkDone(true, chk.getVideoData().title, chk.getDuration()); }, onError(e) { checkDone(false, null, 0, e.data); } } });
 };
 const BLOCKED_TEXT = "The YouTube player could not load. A browser extension (ad blocker or privacy tool) may be blocking youtube.com. Allow it for this page and reload.";
