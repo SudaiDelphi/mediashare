@@ -183,7 +183,7 @@ function renderMod() {
   $("modpoll").textContent = MOCK ? "" : (pa == null || pa > 90) ? "Streamer.bot is not picking up panel actions right now. Check that its 3-second timed action is on. Buttons you press are queued and will run once it does." : "Streamer.bot is picking up panel actions.";
   const b = $("modBtns"); if (!b.children.length) MODBTN.forEach(([l, c]) => { const x = el("button", l); x.onclick = () => modSend(c); b.appendChild(x); });
   const q = $("modq"); q.replaceChildren();
-  if (state) state.queue.forEach(it => { const li = el("li", it.title + " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", x); q.appendChild(li); });
+  if (state) state.queue.forEach(it => { const li = el("li"); li.append(linkTitle(it), " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", x); q.appendChild(li); });
 }
 function preview(it) {   // moderators: watch a queued or waiting request in the page before deciding
   $("modprev").classList.remove("hide"); $("prevtitle").textContent = it.title + " (requested by " + it.by + ")";
@@ -197,8 +197,7 @@ async function loadReview() {   // requests waiting for a mod to approve (only w
   let list = []; try { list = MOCK ? mock.review : ((await api("/mod/review")).review || []); } catch (e) {}
   const o = $("modrev"); o.replaceChildren(); $("revEmpty").classList.toggle("hide", list.length > 0);
   list.forEach(it => {
-    const li = el("li", it.title + " - " + it.by + " ");
-    if (/^https?:\/\//.test(it.url)) { const a = el("a", "Open"); a.href = it.url; a.target = "_blank"; a.rel = "noopener"; li.append(a, " "); }
+    const li = el("li"); li.append(linkTitle(it), " - " + it.by + " ");
     const ok = el("button", "Approve"); ok.onclick = () => modSend("approve " + it.id);
     const no = el("button", "Deny"); no.onclick = () => modSend("deny " + it.id);
     const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", ok, " ", no); o.appendChild(li);
@@ -214,7 +213,7 @@ async function modSend(cmd) {
   }
   else { try { r = await api("/mod", { method: "POST", body: JSON.stringify({ cmd }) }); } catch (e) { r = { message: "Couldn't reach the relay." }; } }
   $("modlog").textContent = (r.ok ? "Queued: " + cmd + " (Streamer.bot runs it within about 3 s)" : (r.message || "Failed: " + cmd)) + "\n" + $("modlog").textContent;
-  setTimeout(refresh, 1200); setTimeout(refresh, 4000);   // the mod action reaches Streamer.bot within about 3 s
+  setTimeout(refresh, 1200); setTimeout(refresh, 4000); setTimeout(refresh, 7000);   // the mod action reaches Streamer.bot within about 3 s
 }
 
 /* ---------- link checker (uses a hidden YouTube player, no API key needed) ---------- */
