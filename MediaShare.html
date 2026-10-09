@@ -165,7 +165,7 @@ async function removeMine(id) {
 }
 
 /* ---------- moderator area: UI is hidden until Twitch confirms you are the broadcaster or a mod; the relay re-checks every action ---------- */
-const MODBTN = [["Pause", "pause"], ["Resume", "resume"], ["Previous", "prev"], ["Next", "next"], ["Vol -5", "volume -5"], ["Vol +5", "volume +5"], ["Audio", "mode audio"], ["Video", "mode video"], ["Both", "mode both"], ["Thumbnail", "thumb toggle"], ["Visualizer", "viz toggle"], ["Lock", "lock"], ["Unlock", "unlock"], ["Power on", "on"], ["Power off", "off"], ["Review mode", "review toggle"], ["Clear queue", "clear"]];
+const MODBTN = [["Pause", "pause"], ["Resume", "resume"], ["Previous", "prev"], ["Next", "next"], ["Vol -5", "volume -5"], ["Vol +5", "volume +5"], ["Audio", "mode audio"], ["Video", "mode video"], ["Both", "mode both"], ["Thumbnail", "thumb toggle"], ["Visualizer", "viz toggle"], ["Lock", "lock"], ["Unlock", "unlock"], ["Power on", "on"], ["Power off", "off"], ["Review mode", "review toggle"], ["Ban playing video", "banvideo"], ["Clear queue", "clear"]];
 async function openMod() {
   if (!token) { sessionStorage.setItem("ms_after", "mod"); return login(true); }
   let ok = false; try { ok = MOCK || (await api("/mod/check")).mod === true; } catch (e) {}
@@ -181,9 +181,14 @@ function renderMod() {
   loadReview();
   const pa = state ? state.polledAgo : null;   // how long ago Streamer.bot last asked the relay for panel actions
   $("modpoll").textContent = MOCK ? "" : (pa == null || pa > 90) ? "Streamer.bot is not picking up panel actions right now. Check that its 3-second timed action is on. Buttons you press are queued and will run once it does." : "Streamer.bot is picking up panel actions.";
-  const b = $("modBtns"); if (!b.children.length) MODBTN.forEach(([l, c]) => { const x = el("button", l); x.onclick = () => modSend(c); b.appendChild(x); });
+  const b = $("modBtns"); if (!b.children.length) MODBTN.forEach(([l, c]) => { const x = el("button", l); x.onclick = () => { if (c === "banvideo" && !confirm("Ban the video that is playing and skip it?")) return; modSend(c); }; b.appendChild(x); });
   const q = $("modq"); q.replaceChildren();
-  if (state) state.queue.forEach(it => { const li = el("li"); li.append(linkTitle(it), " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", x); q.appendChild(li); });
+  if (state) state.queue.forEach(it => { const li = el("li"); li.append(linkTitle(it), " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", x, " ", ...banButtons(it)); q.appendChild(li); });
+}
+function banButtons(it) {   // moderator buttons: ban the video, or ban the viewer
+  const bv = el("button", "Ban video"); bv.onclick = () => { if (confirm("Ban this video from Media Share?")) modSend("banitem " + it.id); };
+  const bu = el("button", "Ban viewer"); bu.onclick = () => { const w = it.login || it.by.toLowerCase(); if (confirm("Ban " + w + " from Media Share?")) modSend("ban " + w); };
+  return [bv, " ", bu];
 }
 function preview(it) {   // moderators: watch a queued or waiting request in the page before deciding
   $("modprev").classList.remove("hide"); $("prevtitle").textContent = it.title + " (requested by " + it.by + ")";
@@ -200,7 +205,7 @@ async function loadReview() {   // requests waiting for a mod to approve (only w
     const li = el("li"); li.append(linkTitle(it), " - " + it.by + " ");
     const ok = el("button", "Approve"); ok.onclick = () => modSend("approve " + it.id);
     const no = el("button", "Deny"); no.onclick = () => modSend("deny " + it.id);
-    const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", ok, " ", no); o.appendChild(li);
+    const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", ok, " ", no, " ", ...banButtons(it)); o.appendChild(li);
   });
 }
 async function modSend(cmd) {
