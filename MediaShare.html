@@ -44,7 +44,9 @@ pre{white-space:pre-wrap;margin:8px 0 0}
       <div id="bar"><div id="fill"></div></div>
       <div id="title" style="font-weight:700;margin-top:8px">Nothing playing</div>
       <div id="by" class="dim"></div>
+      <div id="npmod" class="row hide"></div>
       <div class="row"><button id="watch">Watch here</button><label class="dim">Volume <input id="vol" type="range" min="0" max="100" value="50"></label></div>
+      <div id="modprev" class="hide" style="margin-top:12px"><div style="position:relative;aspect-ratio:16/9;background:#000"><div id="prevp" style="position:absolute;inset:0"></div><video id="prevv" controls class="hide" style="position:absolute;inset:0;width:100%;height:100%"></video></div><div class="row"><span id="prevtitle" class="dim"></span><button id="prevclose">Close preview</button></div></div>
     </section>
     <section>
       <div class="row tabs" style="margin:0 0 10px"><button data-tab="queue" class="active">Queue</button><button data-tab="recent">Recently played</button><button data-tab="mine">My submissions</button><button data-tab="mod" id="modtab" class="hide">Moderator</button></div>
@@ -52,7 +54,7 @@ pre{white-space:pre-wrap;margin:8px 0 0}
       <div id="tab-recent" class="hide"><ol id="recent"></ol><div id="rempty" class="dim">Nothing played yet.</div></div>
       <div id="tab-mine" class="hide"><div id="mineMsg" class="dim"></div><div id="credit" class="badge hide"></div><ol id="mine"></ol></div>
       <div id="tab-mod" class="hide"><div id="modpoll" class="dim" style="margin-bottom:8px"></div><div id="modBtns" class="row" style="margin-top:0"></div>
-      <div id="modprev" class="hide" style="margin-top:12px"><div style="position:relative;aspect-ratio:16/9;background:#000"><div id="prevp" style="position:absolute;inset:0"></div><video id="prevv" controls class="hide" style="position:absolute;inset:0;width:100%;height:100%"></video></div><div class="row"><span id="prevtitle" class="dim"></span><button id="prevclose">Close preview</button></div></div><h2 style="margin-top:14px">Queue</h2><ol id="modq"></ol><h2 style="margin-top:14px">Waiting for review</h2><ol id="modrev"></ol><div id="revEmpty" class="dim">Nothing waiting.</div><pre id="modlog" class="dim"></pre></div>
+      <h2 style="margin-top:14px">Queue</h2><ol id="modq"></ol><h2 style="margin-top:14px">Waiting for review</h2><ol id="modrev"></ol><div id="revEmpty" class="dim">Nothing waiting.</div><pre id="modlog" class="dim"></pre></div>
     </section>
   </div>
   <div>
@@ -104,7 +106,7 @@ let prev = null, lastChange = Date.now(), sig = "", stuckSince = 0, needClick = 
 const mock = { t0: Date.now(), review: [{ id: "r1abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample waiting for review (mock data)", by: "MockViewer", tag: "", dur: 19 }],
   queue: [{ id: "q1", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample queued video (mock data)", by: "MockViewer", login: "mockviewer", tag: "250 Bits", dur: 19, eta: 0 },
           { id: "q3", url: "https://youtu.be/jNQXAC9IVRw", title: "Your sample request (mock data)", by: "TestViewer", login: "testviewer", tag: "", dur: 19, eta: 0 }],
-  history: [{ url: "https://youtu.be/jNQXAC9IVRw", title: "Sample played earlier (mock data)", by: "MockViewer", tag: "1 Sub", dur: 200 }, { url: "https://youtu.be/jNQXAC9IVRw", title: "Another earlier sample (mock data)", by: "AnotherViewer", tag: "", dur: 180 }] };
+  history: [{ id: "h1abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample played earlier (mock data)", by: "MockViewer", tag: "1 Sub", dur: 200 }, { id: "h2abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Another earlier sample (mock data)", by: "AnotherViewer", tag: "", dur: 180 }] };
 async function getState() {
   if (MOCK) {
     const dur = 19, now = Date.now();
@@ -130,7 +132,7 @@ function login(modScope) {
   u.search = new URLSearchParams({ client_id: CFG.clientId, redirect_uri: location.origin + location.pathname, response_type: "token", scope: modScope ? "user:read:moderated_channels" : "", state: st });
   location.href = u;
 }
-$("logout").onclick = () => { token = null; me = null; modOK = false; ["ms_token", "ms_modscope", "ms_after"].forEach(k => sessionStorage.removeItem(k)); $("modtab").classList.add("hide"); renderMe(); showTab("queue"); };
+$("logout").onclick = () => { token = null; me = null; modOK = false; ["ms_token", "ms_modscope", "ms_after"].forEach(k => sessionStorage.removeItem(k)); $("modtab").classList.add("hide"); renderMe(); showTab("queue"); if (state) render(); };
 async function loadMe() {
   if (!token) return renderMe();
   try { me = MOCK ? { name: "TestViewer", credit: { tag: "1 Sub" } } : await api("/me"); if (me.error) { token = null; me = null; sessionStorage.removeItem("ms_token"); } } catch (e) { me = null; }
@@ -173,7 +175,12 @@ async function openMod() {
     if (sessionStorage.getItem("ms_modscope") !== "1") { sessionStorage.setItem("ms_after", "mod"); return login(true); }   // token had no mod scope yet
     return alert("The moderator area is only for the broadcaster and channel moderators.");
   }
-  modOK = true; $("modtab").classList.remove("hide"); showTab("mod"); renderMod();
+  modOK = true; $("modtab").classList.remove("hide"); showTab("mod"); renderMod(); if (state) render();
+}
+async function verifyModQuietly() {   // a returning moderator gets the inline buttons without clicking Moderator login again
+  if (!token || modOK || sessionStorage.getItem("ms_modscope") !== "1") return;
+  let ok = false; try { ok = MOCK || (await api("/mod/check")).mod === true; } catch (e) {}
+  if (ok) { modOK = true; $("modtab").classList.remove("hide"); if (state) render(); }
 }
 $("modlink").onclick = e => { e.preventDefault(); openMod(); };
 function renderMod() {
@@ -186,9 +193,10 @@ function renderMod() {
   if (state) state.queue.forEach(it => { const li = el("li"); li.append(linkTitle(it), " - " + it.by + " "); const x = el("button", "Remove"); x.onclick = () => modSend("removeid " + it.id); const pv = el("button", "Preview"); pv.onclick = () => preview(it); li.append(pv, " ", x, " ", ...banButtons(it)); q.appendChild(li); });
 }
 function banButtons(it) {   // moderator buttons: ban the video, or ban the viewer
-  const bv = el("button", "Ban video"); bv.onclick = () => { if (confirm("Ban this video from Media Share?")) modSend("banitem " + it.id); };
-  const bu = el("button", "Ban viewer"); bu.onclick = () => { const w = it.login || it.by.toLowerCase(); if (confirm("Ban " + w + " from Media Share?")) modSend("ban " + w); };
-  return [bv, " ", bu];
+  const out = [], w = it.login || it.by.toLowerCase();
+  out.push(btn("Ban video", () => { if (confirm("Ban this video from Media Share?")) modSend("banitem " + it.id); }));
+  if (!w.startsWith("_")) out.push(" ", btn("Ban viewer", () => { if (confirm("Ban " + w + " from Media Share?")) modSend("ban " + w); }));   // replays have no real viewer
+  return out;
 }
 function preview(it) {   // moderators: watch a queued or waiting request in the page before deciding
   $("modprev").classList.remove("hide"); $("prevtitle").textContent = it.title + " (requested by " + it.by + ")";
@@ -196,6 +204,7 @@ function preview(it) {   // moderators: watch a queued or waiting request in the
   if (id && prev && prev.loadVideoById) { $("prevv").pause(); $("prevv").classList.add("hide"); $("prevp").classList.remove("hide"); prev.loadVideoById(id); }
   else if (!id && /^https?:\/\//.test(it.url || "")) { if (prev && prev.stopVideo) prev.stopVideo(); $("prevp").classList.add("hide"); $("prevv").classList.remove("hide"); $("prevv").src = it.url; $("prevv").play().catch(() => {}); }
   else $("prevtitle").textContent += " - the YouTube player isn't ready yet, try again in a second";
+  $("modprev").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 $("prevclose").onclick = () => { if (prev && prev.stopVideo) prev.stopVideo(); $("prevv").pause(); $("prevv").removeAttribute("src"); $("modprev").classList.add("hide"); };
 async function loadReview() {   // requests waiting for a mod to approve (only when review mode is on)
@@ -251,16 +260,31 @@ function linkTitle(it) {   // titles open the video on YouTube (or the file) in 
   if (it.url && /^https?:\/\//.test(it.url)) { const a = el("a", it.title); a.href = it.url; a.target = "_blank"; a.rel = "noopener"; return a; }
   return document.createTextNode(it.title);
 }
-function listInto(id, items, fn) { const o = $(id); o.replaceChildren(); items.forEach(it => { const li = el("li"); li.append(linkTitle(it), " "); li.appendChild(el("span", "by " + it.by + " ", "dim")); if (it.tag) li.appendChild(el("span", it.tag, "badge")); li.appendChild(el("span", " " + fmt(it.dur) + fn(it), "dim")); o.appendChild(li); }); }
+function btn(label, fn) { const b = el("button", label); b.onclick = fn; return b; }
+function modButtons(kind, it) {   // inline moderator buttons next to a video (only shown to verified moderators)
+  const out = [btn("Preview", () => preview(it))];
+  if (kind === "queue") out.push(btn("Remove", () => modSend("removeid " + it.id)));
+  if (kind === "recent") out.push(btn("Play again", () => modSend("replay " + it.id)));
+  return out.concat(banButtons(it).filter(x => typeof x !== "string"));
+}
+function renderNpMod() {   // playback and ban buttons under the video that is playing
+  const row = $("npmod"), n = state && state.now; row.replaceChildren(); row.classList.toggle("hide", !(modOK && n));
+  if (!modOK || !n) return;
+  row.append(btn("Previous", () => modSend("prev")), btn("Pause", () => modSend("pause")), btn("Resume", () => modSend("resume")), btn("Skip", () => modSend("next")),
+    btn("Ban video", () => { if (confirm("Ban the video that is playing and skip it?")) modSend("banvideo"); }));
+  const w = n.login || n.by.toLowerCase();
+  if (!w.startsWith("_")) row.append(btn("Ban viewer", () => { if (confirm("Ban " + w + " from Media Share?")) modSend("ban " + w); }));
+}
+function listInto(id, items, fn, kind) { const o = $(id); o.replaceChildren(); items.forEach(it => { const li = el("li"); li.append(linkTitle(it), " "); li.appendChild(el("span", "by " + it.by + " ", "dim")); if (it.tag) li.appendChild(el("span", it.tag, "badge")); li.appendChild(el("span", " " + fmt(it.dur) + fn(it), "dim")); if (modOK && kind) modButtons(kind, it).forEach(b => li.append(" ", b)); o.appendChild(li); }); }
 function render() {
   $("status").textContent = state.waiting ? "Waiting for the stream to connect..." : !state.on ? "Media share is currently off" : state.reviewOn ? "Requests are checked by mods before they play" : "";
   const n = state.now;
   $("title").replaceChildren(n ? linkTitle(n) : document.createTextNode("Nothing playing"));
   $("by").replaceChildren(); if (n) { $("by").append("Requested by " + n.by + " "); if (n.tag) $("by").appendChild(el("span", n.tag, "badge")); }
-  listInto("queue", state.queue, it => " · starts in about " + Math.max(1, Math.round(Math.max(0, it.eta - (state.playing ? (Date.now() + skew - state.at) / 1000 : 0)) / 60)) + " min");
+  listInto("queue", state.queue, it => " · starts in about " + Math.max(1, Math.round(Math.max(0, it.eta - (state.playing ? (Date.now() + skew - state.at) / 1000 : 0)) / 60)) + " min", "queue");
   $("qempty").classList.toggle("hide", state.queue.length > 0);
-  listInto("recent", state.history || [], () => ""); $("rempty").classList.toggle("hide", (state.history || []).length > 0);
-  renderMine(); renderMod(); syncPlayer();
+  listInto("recent", state.history || [], () => "", "recent"); $("rempty").classList.toggle("hide", (state.history || []).length > 0);
+  renderMine(); renderMod(); renderNpMod(); syncPlayer();
 }
 function pmsg(text, hide) { const m = $("pmsg"); m.textContent = text; m.classList.toggle("hide", !!hide); }
 const START_TEXT = "▶ Click here to watch along with the stream";
@@ -325,7 +349,7 @@ setInterval(() => {
 // Polls fast (3 s) while something is changing, while watching, or while the mod panel is open, and slowly (10 s) when quiet. Streamer.bot pushes every change to the relay instantly.
 (function tick() { setTimeout(() => { if (!document.hidden) refresh(); tick(); }, (watching || modOK || Date.now() - lastChange < 300000) ? CFG.fastPollMs : CFG.slowPollMs); })();
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
-renderDonate(); refresh(); loadMe().then(() => { const a = sessionStorage.getItem("ms_after"); if (token && a) afterLogin(); });
+renderDonate(); refresh(); loadMe().then(() => { const a = sessionStorage.getItem("ms_after"); if (token && a) afterLogin(); }); verifyModQuietly();
 </script>
 </body>
 </html>
