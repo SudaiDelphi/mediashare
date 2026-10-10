@@ -98,7 +98,12 @@ const $ = id => document.getElementById(id);
 const fmt = s => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
 const ytId = u => { const m = String(u).match(/(?:youtu\.be\/|v=|\/shorts\/|\/embed\/|\/live\/)([\w-]{11})/); return m ? m[1] : null; };
 function el(tag, text, cls) { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; }
-let prev = null, lastChange = Date.now(), sig = "", stuckSince = 0, needClick = false, lastOk = null, ytFailTimer = null, state = null, skew = 0, token = sessionStorage.getItem("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
+const store = {   // the Twitch login is kept in this browser (survives refreshes, new tabs and restarts) until you log out
+  get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} },
+  del: k => { try { localStorage.removeItem(k); } catch (e) {} }
+};
+let prev = null, lastChange = Date.now(), sig = "", stuckSince = 0, needClick = false, lastOk = null, ytFailTimer = null, state = null, skew = 0, token = store.get("ms_token"), me = null, modOK = false, watching = false, yt = null, chk = null, ytReady = false, curId = null, chkTimer = null;
 
 /* ---------- data layer (mock or relay) ----------
    Relay API: GET /state | GET /me | POST /remove {id} | GET /mod/check | POST /mod {cmd}
@@ -120,22 +125,22 @@ async function api(path, opts) { opts = opts || {}; opts.headers = Object.assign
 /* ---------- Twitch login (implicit flow). Only triggered when someone opens My submissions or the mod area ---------- */
 if (location.hash.includes("access_token")) {
   const h = new URLSearchParams(location.hash.slice(1));
-  if (h.get("state") === sessionStorage.getItem("ms_state")) { token = h.get("access_token"); sessionStorage.setItem("ms_token", token); }
+  if (h.get("state") === sessionStorage.getItem("ms_state")) { token = h.get("access_token"); store.set("ms_token", token); store.del("ms_notmod"); }
   history.replaceState(null, "", location.pathname + location.search);
 }
 function login(modScope) {
-  if (modScope) sessionStorage.setItem("ms_modscope", "1");
-  if (MOCK) { token = "mock"; sessionStorage.setItem("ms_token", token); return afterLogin(); }
+  if (modScope) store.set("ms_modscope", "1");
+  if (MOCK) { token = "mock"; store.set("ms_token", token); return afterLogin(); }
   if (!CFG.clientId || CFG.clientId.startsWith("PASTE")) return alert("Twitch login is not set up yet: the Client ID is missing in config.js.");
   const st = crypto.randomUUID(); sessionStorage.setItem("ms_state", st);
   const u = new URL("https://id.twitch.tv/oauth2/authorize");   // mod login also asks to read which channels you moderate
   u.search = new URLSearchParams({ client_id: CFG.clientId, redirect_uri: location.origin + location.pathname, response_type: "token", scope: modScope ? "user:read:moderated_channels" : "", state: st });
   location.href = u;
 }
-$("logout").onclick = () => { token = null; me = null; modOK = false; ["ms_token", "ms_modscope", "ms_after"].forEach(k => sessionStorage.removeItem(k)); $("modtab").classList.add("hide"); renderMe(); showTab("queue"); if (state) render(); };
+$("logout").onclick = () => { token = null; me = null; modOK = false; ["ms_token", "ms_modscope", "ms_modok", "ms_notmod", "ms_renewat"].forEach(k => store.del(k)); sessionStorage.removeItem("ms_after"); $("modtab").classList.add("hide"); renderMe(); showTab("queue"); if (state) render(); };
 async function loadMe() {
   if (!token) return renderMe();
-  try { me = MOCK ? { name: "TestViewer", credit: { tag: "1 Sub" } } : await api("/me"); if (me.error) { token = null; me = null; sessionStorage.removeItem("ms_token"); } } catch (e) { me = null; }
+  try { me = MOCK ? { name: "TestViewer", credit: { tag: "1 Sub" } } : await api("/me"); if (me.error) tokenExpired(); } catch (e) { me = null; }
   renderMe();
 }
 function renderMe() { $("who").textContent = me ? "Logged in as " + me.name : ""; $("logout").classList.toggle("hide", !me); renderMine(); }
@@ -170,17 +175,31 @@ async function removeMine(id) {
 const MODBTN = [["Pause", "pause"], ["Resume", "resume"], ["Previous", "prev"], ["Next", "next"], ["Vol -5", "volume -5"], ["Vol +5", "volume +5"], ["Audio", "mode audio"], ["Video", "mode video"], ["Both", "mode both"], ["Thumbnail", "thumb toggle"], ["Visualizer", "viz toggle"], ["Lock", "lock"], ["Unlock", "unlock"], ["Power on", "on"], ["Power off", "off"], ["Review mode", "review toggle"], ["Ban playing video", "banvideo"], ["Clear queue", "clear"]];
 async function openMod() {
   if (!token) { sessionStorage.setItem("ms_after", "mod"); return login(true); }
-  let ok = false; try { ok = MOCK || (await api("/mod/check")).mod === true; } catch (e) {}
-  if (!ok) {
-    if (sessionStorage.getItem("ms_modscope") !== "1") { sessionStorage.setItem("ms_after", "mod"); return login(true); }   // token had no mod scope yet
-    return alert("The moderator area is only for the broadcaster and channel moderators.");
+  let r = null; try { r = MOCK ? { mod: true } : await api("/mod/check"); } catch (e) {}
+  if (r && r.error) { dropToken(); sessionStorage.setItem("ms_after", "mod"); return login(true); }   // the saved login expired: sign in again
+  if (!(r && r.mod === true)) {
+    if (store.get("ms_modscope") !== "1") { sessionStorage.setItem("ms_after", "mod"); return login(true); }   // token had no mod scope yet
+    return alert(r ? "The moderator area is only for the broadcaster and channel moderators." : "Couldn't reach the relay to check your access. Try again in a moment.");
   }
-  modOK = true; $("modtab").classList.remove("hide"); showTab("mod"); renderMod(); if (state) render();
+  store.del("ms_notmod"); store.set("ms_modok", "1"); modOK = true; $("modtab").classList.remove("hide"); showTab("mod"); renderMod(); if (state) render();
 }
-async function verifyModQuietly() {   // a returning moderator gets the inline buttons without clicking Moderator login again
-  if (!token || modOK || sessionStorage.getItem("ms_modscope") !== "1") return;
-  let ok = false; try { ok = MOCK || (await api("/mod/check")).mod === true; } catch (e) {}
-  if (ok) { modOK = true; $("modtab").classList.remove("hide"); if (state) render(); }
+let modChecking = false, modTries = 0;
+async function verifyModQuietly() {   // keeps a moderator's buttons visible across refreshes: shown at once, then confirmed in the background
+  if (!token || modChecking || modTries > 20 || store.get("ms_modscope") !== "1" || store.get("ms_notmod") === "1") return;
+  modChecking = true; modTries++;
+  try {
+    const r = MOCK ? { mod: true } : await api("/mod/check");
+    if (r && r.error) tokenExpired();   // the saved login expired
+    else if (r && r.mod === true) { store.set("ms_modok", "1"); if (!modOK) { modOK = true; $("modtab").classList.remove("hide"); if (state) render(); } }
+    else if (r && r.mod === false) { store.set("ms_notmod", "1"); store.del("ms_modok"); if (modOK) { modOK = false; $("modtab").classList.add("hide"); if (state) render(); } }   // definitely not a moderator
+  } catch (e) { /* a network hiccup: keep what is shown and try again on the next refresh */ }
+  modChecking = false;
+}
+function dropToken() { token = null; me = null; store.del("ms_token"); }
+function tokenExpired() {   // an expired Twitch login: moderators are signed in again automatically (Twitch skips its prompt for apps you already approved)
+  const wasMod = store.get("ms_modscope") === "1"; dropToken(); renderMe();
+  const last = +(store.get("ms_renewat") || 0);
+  if (wasMod && !MOCK && Date.now() - last > 300000) { store.set("ms_renewat", String(Date.now())); login(true); }
 }
 $("modlink").onclick = e => { e.preventDefault(); openMod(); };
 function renderMod() {
@@ -328,6 +347,7 @@ async function refresh() {
     const s = await getState();
     if (!s || s.error || !Array.isArray(s.queue)) throw new Error(s && s.error ? "the relay reported: " + s.error : "unexpected reply");
     s.history = s.history || []; state = s; skew = s.serverTime - Date.now(); lastOk = new Date();
+    if (token && !modOK) verifyModQuietly();   // self-heals if the first check could not reach the relay
     const g = JSON.stringify([s.on, s.now && s.now.id, s.playing, s.queue.map(q => q.id), (s.review || []).length, s.reviewOn]);
     if (g !== sig) { sig = g; lastChange = Date.now(); }
     const age = (s.serverTime - s.at) / 1000;
@@ -349,6 +369,7 @@ setInterval(() => {
 // Polls fast (3 s) while something is changing, while watching, or while the mod panel is open, and slowly (10 s) when quiet. Streamer.bot pushes every change to the relay instantly.
 (function tick() { setTimeout(() => { if (!document.hidden) refresh(); tick(); }, (watching || modOK || Date.now() - lastChange < 300000) ? CFG.fastPollMs : CFG.slowPollMs); })();
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+if (token && store.get("ms_modscope") === "1" && store.get("ms_modok") === "1") { modOK = true; $("modtab").classList.remove("hide"); }   // a returning moderator sees the buttons immediately
 renderDonate(); refresh(); loadMe().then(() => { const a = sessionStorage.getItem("ms_after"); if (token && a) afterLogin(); }); verifyModQuietly();
 </script>
 </body>
