@@ -19,6 +19,13 @@ section{background:var(--panel);border:1px solid #333;border-radius:6px;padding:
 #player>*{position:absolute;inset:0;width:100%;height:100%;border:0}
 #pmsg{display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;color:#ddd;background:#0c0c10;font-size:16px;cursor:pointer}
 #player.idle{aspect-ratio:auto;height:52px}
+#acover{background:#0b0d17 center/cover}
+#acover::before{content:"";position:absolute;inset:0;background:rgba(13,16,51,.6)}
+#abars{position:absolute;left:8%;right:8%;bottom:10%;height:55%;display:flex;align-items:flex-end;gap:4px}
+#abars i{flex:1;background:var(--accent);height:8%;border-radius:2px 2px 0 0;transition:height .12s}
+#player.aud>iframe{opacity:0;pointer-events:none}
+#player.aud-nothumb{aspect-ratio:auto;height:52px;overflow:hidden}
+#player.aud-nothumb>iframe{inset:auto;top:0;left:0;width:640px;height:360px}
 #bar{height:8px;background:#333;margin-top:8px}#fill{height:100%;width:0;background:var(--accent)}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
 .badge{padding:1px 8px;background:var(--accent);color:#000;font-size:12px;font-weight:700}
@@ -58,7 +65,8 @@ pre{white-space:pre-wrap;margin:8px 0 0}
   <div>
     <section>
       <h2>Now playing</h2>
-      <div id="player" class="idle"><div id="yt"></div><button id="pmsg" type="button">▶ Click here to watch along with the stream</button></div>
+      <div id="player" class="idle"><div id="yt"></div><div id="acover" class="hide"><div id="abars"></div></div><button id="pmsg" type="button">▶ Click here to watch along with the stream</button></div>
+      <div id="modehint" class="dim small hide"></div>
       <div id="bar"><div id="fill"></div></div>
       <div id="title" style="font-weight:700;margin-top:8px">Nothing playing</div>
       <div id="by" class="dim"></div>
@@ -93,7 +101,8 @@ pre{white-space:pre-wrap;margin:8px 0 0}
       <b>Channel points:</b> redeem the reward with the link as your message.<br>
       <b>Tips/donations:</b> put the link in the donation message and donate under your Twitch name.<br>
       Higher paid amounts go first, then channel points, then free. Nothing interrupts the song that is playing.<br>
-      Supported: YouTube links and direct audio/video files.<br>Each person can have a limited number of requests waiting, and a maximum video length, depending on their role. Type <code>!ms limits</code> in chat to see them.
+      Supported: YouTube links and direct audio/video files.<br>
+      When the queue is empty a default playlist plays, and your request starts as soon as you make it.<br>Each person can have a limited number of requests waiting, and a maximum video length, depending on their role. Type <code>!ms limits</code> in chat to see them.
       </details>
     </section>
     <section id="donate" class="hide dim">
@@ -136,7 +145,7 @@ let prev = null, lastChange = Date.now(), sig = "", stuckSince = 0, needClick = 
 /* ---------- data layer (mock or relay) ----------
    Relay API: GET /state | GET /me | POST /remove {id} | GET /mod/check | POST /mod {cmd}
    (token calls send "Authorization: Bearer <twitch token>"; the relay validates every one) */
-const mock = { t0: Date.now(), on: true, reviewOn: false, settings: { mode: "both", thumb: true, viz: true, vol: 70, locked: false }, review: [{ id: "r1abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample waiting for review (mock data)", by: "MockViewer", tag: "", dur: 19 }],
+const mock = { t0: Date.now(), on: true, reviewOn: false, settings: { mode: "both", thumb: true, viz: true, vol: 70, locked: false, defaultOn: true, defaultTracks: 12 }, review: [{ id: "r1abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample waiting for review (mock data)", by: "MockViewer", tag: "", dur: 19 }],
   queue: [{ id: "q1", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample queued video (mock data)", by: "MockViewer", login: "mockviewer", tag: "250 Bits", dur: 19, eta: 0 },
           { id: "q3", url: "https://youtu.be/jNQXAC9IVRw", title: "Your sample request (mock data)", by: "TestViewer", login: "testviewer", tag: "", dur: 19, eta: 0 }],
   history: [{ id: "h1abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Sample played earlier (mock data)", by: "MockViewer", tag: "1 Sub", dur: 200 }, { id: "h2abcd", url: "https://youtu.be/jNQXAC9IVRw", title: "Another earlier sample (mock data)", by: "AnotherViewer", tag: "", dur: 180 }] };
@@ -260,8 +269,8 @@ function renderNpMod() {   // under Now playing: playback buttons, stream volume
   }
 }
 function renderModControls() {   // the "Stream settings" card: one row per group, toggles show the current state
-  const s = (state && state.settings) || { mode: "both", thumb: true, viz: true, vol: 70, locked: false };
-  const v = { mode: eff("mode", s.mode), thumb: eff("thumb", s.thumb), viz: eff("viz", s.viz), locked: eff("locked", s.locked), on: eff("on", state ? state.on : true), review: eff("review", state ? !!state.reviewOn : false) };
+  const s = (state && state.settings) || { mode: "both", thumb: true, viz: true, vol: 70, locked: false, defaultOn: true, defaultTracks: 0 };
+  const v = { mode: eff("mode", s.mode), thumb: eff("thumb", s.thumb), viz: eff("viz", s.viz), locked: eff("locked", s.locked), on: eff("on", state ? state.on : true), review: eff("review", state ? !!state.reviewOn : false), def: eff("def", !!s.defaultOn), tracks: s.defaultTracks || 0 };
   const sig = JSON.stringify(v); if (sig === ctlSig) return; ctlSig = sig;
   const box = $("modctl"); box.replaceChildren();
   const row = label => { const r = el("div", null, "srow"); r.appendChild(el("span", label, "slabel")); const g = el("div", null, "group"); r.appendChild(g); box.appendChild(r); return g; };
@@ -277,6 +286,9 @@ function renderModControls() {   // the "Stream settings" card: one row per grou
   g.appendChild(btn("Media Share: " + (v.on ? "On" : "Off"), () => send(v.on ? "off" : "on", "on", !v.on), v.on ? "on" : "danger"));
   g.appendChild(btn("Free requests: " + (v.locked ? "Locked" : "Open"), () => send(v.locked ? "unlock" : "lock", "locked", !v.locked), v.locked ? "danger" : ""));
   toggle(g, "Review mode", "review", v.review, "review on", "review off", "Every request waits for a moderator to approve it");
+  g = row("Playlist");
+  toggle(g, "Default playlist", "def", v.def, "default on", "default off", "Plays whenever the queue is empty. Fill it in chat with: !ms default fill <search words>");
+  g.appendChild(el("span", v.tracks + " tracks", "dim"));
 }
 function modRow(it, buttons, n) {   // one row: title and details on the left, action buttons on the right
   const li = el("li", null, "mi"), main = el("div", null, "mi-main"), acts = el("div", null, "mi-btns");
@@ -330,6 +342,7 @@ async function modSend(cmd) {
     if (m2) { if (m2[1] === "mode") S.mode = m2[2]; if (m2[1] === "thumb") S.thumb = m2[2] === "on"; if (m2[1] === "viz") S.viz = m2[2] === "on"; if (m2[1] === "review") mock.reviewOn = m2[2] === "on"; }
     if (cmd === "lock") S.locked = true; if (cmd === "unlock") S.locked = false; if (cmd === "on") mock.on = true; if (cmd === "off") mock.on = false;
     const vm = cmd.match(/^volume ([+-]?)(\d+)/); if (vm) S.vol = Math.max(0, Math.min(100, vm[1] ? S.vol + (vm[1] === "-" ? -1 : 1) * +vm[2] : +vm[2]));
+    const dm = cmd.match(/^default (on|off)/); if (dm) S.defaultOn = dm[1] === "on";
     if (cmd === "clear") mock.queue = [];
     r = { ok: true, message: "(mock) " + cmd };
   }
@@ -391,13 +404,29 @@ function render() {
   $("title").replaceChildren(n ? linkTitle(n) : document.createTextNode("Nothing playing"));
   $("by").replaceChildren(); if (n) { $("by").append("Requested by " + n.by + " "); if (n.tag) $("by").appendChild(el("span", n.tag, "badge")); }
   listInto("queue", state.queue, it => " · starts in about " + Math.max(1, Math.round(Math.max(0, it.eta - (state.playing ? (Date.now() + skew - state.at) / 1000 : 0)) / 60)) + " min", "queue");
+  $("qempty").textContent = state.settings && state.settings.defaultOn && state.settings.defaultTracks ? "The queue is empty. The default playlist plays until someone makes a request." : "The queue is empty.";
   $("qempty").classList.toggle("hide", state.queue.length > 0);
   listInto("recent", state.history || [], () => "", "recent"); $("rempty").classList.toggle("hide", (state.history || []).length > 0);
   renderMine(); renderMod(); renderNpMod(); syncPlayer();
 }
 function pmsg(text, hide) { const m = $("pmsg"); m.textContent = text; m.classList.toggle("hide", !!hide); }
 const START_TEXT = "▶ Click here to watch along with the stream";
+function applyWatchMode() {   // the in-page player mirrors the stream overlay: audio-only, video-only (no sound) or both
+  const s = (state && state.settings) || { mode: "both", thumb: true, viz: true };
+  const n = state && state.now, id = n && ytId(n.url), pl = $("player");
+  const audio = watching && s.mode === "audio" && !!id;
+  pl.classList.toggle("aud", audio); pl.classList.toggle("aud-nothumb", audio && !s.thumb);
+  const cov = $("acover"); cov.classList.toggle("hide", !(audio && s.thumb));
+  if (audio && s.thumb) cov.style.backgroundImage = "url(https://img.youtube.com/vi/" + id + "/hqdefault.jpg)";
+  $("abars").classList.toggle("hide", !s.viz);
+  if (watching && yt && ytReady && yt.mute) { if (s.mode === "video") yt.mute(); else yt.unMute(); }   // no sound on the stream in video-only mode, so none here either
+  const hint = !watching ? "" : s.mode === "audio" ? "The stream is in audio-only mode, so the video is hidden here too" + (s.thumb ? "." : " (thumbnail hidden).") : s.mode === "video" ? "The stream is in video-only mode (no sound), so it is muted here too." : "";
+  const mh = $("modehint"); mh.textContent = hint; mh.classList.toggle("hide", hint === "");
+}
+const abars = $("abars"); for (let i = 0; i < 28; i++) abars.appendChild(document.createElement("i"));
+setInterval(() => { if (watching && $("player").classList.contains("aud") && state && state.playing) [...abars.children].forEach((b, i) => { b.style.height = (10 + Math.abs(Math.sin(Date.now() / 300 + i * .7)) * 35 + Math.random() * 45) + "%"; }); }, 150);   // simulated visualizer, like the overlay
 function syncPlayer() {   // keeps the embedded player on the same video and position as the stream
+  applyWatchMode();
   if (!watching || !ytReady) return;
   if (!state) return pmsg("Waiting for the stream...", false);
   const n = state.now, id = n && ytId(n.url);
@@ -418,6 +447,7 @@ const BLOCKED_TEXT = "The YouTube player could not load. A browser extension (ad
 function toggleWatch() {
   watching = !watching; $("watch").textContent = watching ? "Stop watching" : "Watch here";
   $("player").classList.toggle("idle", !watching); $("volwrap").classList.toggle("hide", !watching);   // the big player only takes room while you are watching
+  applyWatchMode();
   if (!watching) { if (yt && ytReady) yt.stopVideo(); curId = null; return pmsg(START_TEXT, false); }
   if (ytReady) { curId = null; return syncPlayer(); }
   if (window.ytFailed) return pmsg(BLOCKED_TEXT, false);
